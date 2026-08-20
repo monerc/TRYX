@@ -1,0 +1,454 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: #111;
+    color: #fff;
+    font-family: Arial, sans-serif;
+}
+
+#wrap {
+    width: 1100px;
+    margin: 0 auto;
+    padding: 50px 0;
+}
+
+/* HEADER */
+header {
+    margin-bottom: 40px;
+}
+
+header h1 {
+    font-size: 36px;
+    color: #f2a900;
+}
+
+header p {
+    margin-top: 10px;
+    color: #888;
+}
+
+/* SECTION */
+section {
+    padding: 30px;
+    margin-bottom: 20px;
+    background: #1b1b1b;
+    border: 1px solid #333;
+}
+
+section h2 {
+    margin-bottom: 20px;
+    font-size: 20px;
+}
+
+/* 현재 감도 */
+.setting_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 15px;
+}
+
+.setting label,
+.weapon_setting label {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+.setting input,
+.weapon_setting select {
+    width: 100%;
+    padding: 12px;
+    background: #111;
+    border: 1px solid #444;
+    color: #fff;
+    font-size: 16px;
+}
+
+.setting input:focus,
+.weapon_setting select:focus {
+    outline: 1px solid #f2a900;
+    border-color: #f2a900;
+}
+
+.setting_note {
+    margin-top: 15px;
+    color: #777;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.dynamic_scope_setting input {
+    border-color: #725600;
+}
+
+.dynamic_scope_setting span {
+    color: #f2a900;
+}
+
+/* 총기 설정 */
+.weapon_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px;
+}
+
+.weapon_setting select:disabled {
+    background: #191919;
+    color: #555;
+    cursor: not-allowed;
+}
+
+.weapon_info {
+    display: flex;
+    gap: 35px;
+    margin-top: 20px;
+    padding: 15px 18px;
+    background: #111;
+    border: 1px solid #292929;
+}
+
+.weapon_info span {
+    color: #777;
+    font-size: 13px;
+}
+
+.weapon_info strong {
+    margin-left: 8px;
+    color: #f2a900;
+}
+
+/* 테스트 */
+.description {
+    margin-bottom: 20px;
+    color: #999;
+    line-height: 1.6;
+}
+
+.test_info {
+    display: flex;
+    gap: 30px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+}
+
+.test_info span {
+    color: #777;
+    font-size: 13px;
+}
+
+.test_info strong {
+    margin-left: 5px;
+    color: #f2a900;
+}
+
+/* AIM AREA */
+#aimArea {
+    position: relative;
+    width: 100%;
+    height: 500px;
+    overflow: hidden;
+    cursor: none;
+    border: 1px solid #444;
+    background:
+        linear-gradient(#222 1px, transparent 1px),
+        linear-gradient(90deg, #222 1px, transparent 1px);
+    background-size: 50px 50px;
+    user-select: none;
+}
+
+#aimArea.testing {
+    border-color: #705500;
+}
+
+/* 사람 타겟 */
+#target {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 180px;
+    height: 350px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+.target_head {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 75px;
+    height: 85px;
+    transform: translateX(-50%);
+    background: #555;
+    border-radius: 50%;
+}
+
+.target_body {
+    position: absolute;
+    left: 50%;
+    top: 75px;
+    width: 170px;
+    height: 250px;
+    transform: translateX(-50%);
+    background: #444;
+    clip-path: polygon(
+        25% 0,
+        75% 0,
+        100% 25%,
+        85% 100%,
+        15% 100%,
+        0 25%
+    );
+}
+
+/*
+    중요:
+    #target 자체가 AIM AREA 중앙에 있으므로
+    target_center의 50% / 50%가
+    RED DOT의 논리적 0,0과 정확히 일치한다.
+*/
+.target_center {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 32px;
+    height: 32px;
+    transform: translate(-50%, -50%);
+    border: 2px solid #999;
+    border-radius: 50%;
+    z-index: 5;
+}
+
+/* RED DOT */
+#redDot {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 8px;
+    height: 8px;
+    transform: translate(-50%, -50%);
+    background: #ff2020;
+    border-radius: 50%;
+    box-shadow:
+        0 0 5px #ff0000,
+        0 0 10px #ff0000,
+        0 0 15px rgba(255, 0, 0, 0.5);
+    pointer-events: none;
+    z-index: 10;
+}
+
+#status {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    color: #aaa;
+    font-size: 14px;
+    z-index: 20;
+}
+
+/* BUTTON */
+#startBtn,
+#applyRecommendBtn {
+    width: 100%;
+    padding: 15px;
+    border: none;
+    background: #f2a900;
+    color: #111;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#startBtn {
+    margin-top: 15px;
+}
+
+#startBtn:hover,
+#applyRecommendBtn:hover {
+    background: #ffc238;
+}
+
+#startBtn:disabled,
+#applyRecommendBtn:disabled {
+    background: #555;
+    color: #999;
+    cursor: not-allowed;
+}
+
+/* 분석 결과 */
+.result_grid,
+.detail_grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+}
+
+.detail_grid {
+    margin-top: 15px;
+}
+
+.result_grid div,
+.detail_grid div,
+.control_result div,
+.recommend_grid div {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px;
+    background: #111;
+}
+
+.result_grid span,
+.detail_grid span,
+.control_result span,
+.recommend_grid span {
+    color: #777;
+    font-size: 13px;
+}
+
+.result_grid strong,
+.detail_grid strong {
+    font-size: 22px;
+}
+
+/* 제어 결과 */
+.control_result {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.control_result strong {
+    color: #f2a900;
+    font-size: 20px;
+}
+
+#comparison {
+    margin-top: 15px;
+    padding: 15px;
+    background: #111;
+    color: #888;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* 추천 */
+.recommend_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px;
+}
+
+.recommend_grid strong {
+    color: #f2a900;
+    font-size: 24px;
+}
+
+.recommend_grid small {
+    color: #777;
+    font-size: 12px;
+}
+
+#feedback {
+    margin-top: 20px;
+    padding: 15px;
+    background: #111;
+    color: #aaa;
+    line-height: 1.7;
+}
+
+#applyRecommendBtn {
+    margin-top: 15px;
+}
+
+/* 반응형 */
+@media (max-width: 1150px) {
+    #wrap {
+        width: 90%;
+    }
+}
+
+@media (max-width: 800px) {
+    .setting_grid,
+    .weapon_grid,
+    .result_grid,
+    .detail_grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .control_result,
+    .recommend_grid {
+        grid-template-columns: 1fr;
+    }
+
+    #aimArea {
+        height: 450px;
+    }
+}
+
+@media (max-width: 520px) {
+    .setting_grid,
+    .weapon_grid,
+    .result_grid,
+    .detail_grid {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 27px;
+    }
+
+    section {
+        padding: 20px;
+    }
+}
+
+/* 전체화면 테스트 */
+.test:fullscreen {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 30px 50px;
+    border: none;
+    background: #111;
+    display: flex;
+    flex-direction: column;
+}
+
+.test:fullscreen h2 {
+    margin-bottom: 10px;
+}
+
+.test:fullscreen .description {
+    margin-bottom: 10px;
+}
+
+.test:fullscreen .test_info {
+    margin-bottom: 10px;
+}
+
+.test:fullscreen #aimArea {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+}
+
+.test:fullscreen #startBtn {
+    display: none;
+}
+
+.test:fullscreen #target {
+    transform: translate(-50%, -50%) scale(1.15);
+}
+
+.test:fullscreen #status {
+    top: 25px;
+    left: 25px;
+    font-size: 16px;
+}

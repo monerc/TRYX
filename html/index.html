@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRYX Sensitivity Analyzer</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/script.js" defer></script>
+</head>
+<body>
+<div id="wrap">
+    <header>
+        <h1>TRYX SENSITIVITY ANALYZER</h1>
+        <p>반동 제어 패턴을 분석하여 감도를 추천합니다.</p>
+    </header>
+    <main>
+        <!-- 현재 설정 -->
+        <section class="setting">
+            <h2>현재 설정</h2>
+            <div class="setting_grid">
+                <label>
+                    DPI 감도
+                    <input type="number" id="dpi" value="800" min="100" max="10000">
+                </label>
+                <label>
+                    일반 감도
+                    <input type="number" id="general" value="40" min="0" max="100">
+                </label>
+                <label>
+                    ADS 감도
+                    <input type="number" id="ads" value="35" min="1" max="100">
+                </label>
+                <label>
+                    수직 감도 배수
+                    <input type="number" id="vertical" value="1.0" min="0.1" max="2" step="0.01">
+                </label>
+            </div>
+            <p class="setting_note">
+                DPI는 실제 마우스에 설정된 값을 입력해주세요.
+                입력창의 DPI 숫자만 변경한다고 실제 마우스 DPI가 변경되는 것은 아닙니다.
+            </p>
+        </section>
+        <!-- 총기 설정 -->
+        <section class="weapon_setting">
+            <h2>테스트 총기 설정</h2>
+            <div class="weapon_grid">
+                <label>
+                    총기
+                    <select id="weapon">
+                        <option value="m416">M416</option>
+                        <option value="beryl">Beryl M762</option>
+                        <option value="aug">AUG</option>
+                        <option value="ace32">ACE32</option>
+                        <option value="akm">AKM</option>
+                    </select>
+                </label>
+                <label>
+                    조준경
+                    <select id="sight">
+                        <option value="redDot">레드 도트</option>
+                        <option value="holo">홀로그램</option>
+                        <option value="2x">2배율</option>
+                        <option value="3x">3배율</option>
+                        <option value="4x">4배율</option>
+                        <option value="6x">6배율</option>
+                    </select>
+                </label>
+                <label>
+                    총구
+                    <select id="muzzle">
+                        <option value="none">없음</option>
+                        <option value="compensator">보정기</option>
+                        <option value="muzzleBrake">제동기</option>
+                        <option value="flashHider">소염기</option>
+                        <option value="suppressor">소음기</option>
+                    </select>
+                </label>
+                <label>
+                    손잡이
+                    <select id="grip">
+                        <option value="none">없음</option>
+                        <option value="vertical">수직 손잡이</option>
+                        <option value="tilted">틸티드 그립</option>
+                        <option value="half">하프 그립</option>
+                        <option value="thumb">엄지 그립</option>
+                    </select>
+                </label>
+                <label>
+                    자세
+                    <select id="stance">
+                        <option value="stand">서서 사격</option>
+                        <option value="crouch">앉아서 사격</option>
+                    </select>
+                </label>
+            </div>
+            <div class="weapon_info">
+                <span>
+                    선택 총기
+                    <strong id="selectedWeapon">M416</strong>
+                </span>
+                <span>
+                    연사속도
+                    <strong id="weaponRPM">700 RPM</strong>
+                </span>
+            </div>
+        </section>
+        <!-- 반동 테스트 -->
+        <section class="test" id="testSection">
+            <h2>반동 제어 테스트</h2>
+            <p class="description">
+                총 3회의 테스트를 진행합니다.
+                빨간 점이 중앙 원에서 벗어나지 않도록
+                수직 반동과 좌우 반동을 마우스로 제어해주세요.
+            </p>
+            <div class="test_info">
+                <span>
+                    TEST
+                    <strong id="roundText">0 / 3</strong>
+                </span>
+                <span>
+                    TIME
+                    <strong id="timeText">0.0</strong>
+                </span>
+                <span>
+                    CONTROL
+                    <strong>VERTICAL + HORIZONTAL</strong>
+                </span>
+            </div>
+            <div id="aimArea">
+                <div id="target">
+                    <div class="target_head"></div>
+                    <div class="target_body"></div>
+                    <!-- 실제 JS 판정 기준과 정확히 같은 원 -->
+                    <div class="target_center"></div>
+                </div>
+                <div id="redDot"></div>
+                <div id="status">
+                    READY
+                </div>
+            </div>
+            <button id="startBtn">
+                START TEST
+            </button>
+        </section>
+        <!-- 분석 결과 -->
+        <section class="result">
+            <h2>분석 결과</h2>
+            <div class="result_grid">
+                <div>
+                    <span>평균 수평 오차</span>
+                    <strong id="resultX">0</strong>
+                </div>
+                <div>
+                    <span>평균 수직 오차</span>
+                    <strong id="resultY">0</strong>
+                </div>
+                <div>
+                    <span>중앙 평균 거리</span>
+                    <strong id="averageDistance">0</strong>
+                </div>
+                <div>
+                    <span>중앙 유지율</span>
+                    <strong id="centerRate">0%</strong>
+                </div>
+            </div>
+            <!-- 중앙 이탈 분석 -->
+            <div class="detail_grid">
+                <div>
+                    <span>중앙 이탈 횟수</span>
+                    <strong id="escapeCount">0회</strong>
+                </div>
+                <div>
+                    <span>원 밖 체류 시간</span>
+                    <strong id="outsideTime">0.0초</strong>
+                </div>
+                <div>
+                    <span>평균 이탈 거리</span>
+                    <strong id="outsideDistance">0 px</strong>
+                </div>
+                <div>
+                    <span>평균 복귀 시간</span>
+                    <strong id="returnTime">0.00초</strong>
+                </div>
+            </div>
+            <!-- 제어 분석 -->
+            <div class="control_result">
+                <div>
+                    <span>수직 제어</span>
+                    <strong id="verticalControl">-</strong>
+                </div>
+
+                <div>
+                    <span>수평 제어</span>
+                    <strong id="horizontalControl">-</strong>
+                </div>
+
+                <div>
+                    <span>종합 안정성</span>
+                    <strong id="stability">-</strong>
+                </div>
+            </div>
+            <p id="comparison">
+                이전 테스트 기록이 없습니다.
+            </p>
+        </section>
+        <!-- 추천 감도 -->
+        <section class="recommend">
+            <h2>추천 감도</h2>
+            <div class="recommend_grid">
+                <div>
+                    <span>일반 감도</span>
+                    <strong id="recommendGeneral">-</strong>
+                    <small id="recommendGeneralState">-</small>
+                </div>
+                <div>
+                    <span>ADS 감도</span>
+                    <strong id="recommendADS">-</strong>
+                    <small id="recommendADSState">-</small>
+                </div>
+                <div>
+                    <span>수직 감도 배수</span>
+                    <strong id="recommendVertical">-</strong>
+                    <small id="recommendVerticalState">-</small>
+                </div>
+            </div>
+            <p id="feedback">
+                테스트를 진행해주세요.
+            </p>
+            <button id="applyRecommendBtn" disabled>
+                추천값 적용
+            </button>
+        </section>
+    </main>
+</div>
+</body>
+</html>
