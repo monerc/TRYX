@@ -72,6 +72,35 @@ const MOUSE_INPUT_SCALE = 0.045;
 // 전체 반동 보정값
 const RECOIL_CALIBRATION = 1.00;
 
+// TRYX 기준 테스트 영역
+const REFERENCE_AIM_WIDTH = 1818;
+const REFERENCE_AIM_HEIGHT = 918;
+
+// 현재 화면 해상도 배율
+function getResolutionScale() {
+    const currentHeight = aimArea.clientHeight;
+    if (currentHeight <= 0) {
+        return 1;
+    }
+    return currentHeight / REFERENCE_AIM_HEIGHT;
+}
+
+// 전체화면 타겟 기본 크기
+const BASE_FULLSCREEN_TARGET_SCALE = 1.15;
+
+// 해상도에 맞춰 타겟 크기 조절
+function updateResolutionUI() {
+    const resolutionScale = getResolutionScale();
+
+    const targetScale =
+        BASE_FULLSCREEN_TARGET_SCALE *
+        resolutionScale;
+    testSection.style.setProperty (
+        "--target-scale",
+        targetScale
+    );
+}
+
 // 최소 입력 판정
 const NO_INPUT_DISTANCE = 80;
 const NO_VERTICAL_INPUT = 40;
@@ -280,6 +309,59 @@ let nextRoundTimer;
 let horizontalDirection = 1;
 let shotsUntilDirectionChange = 3;
 
+// 동일 반동 패턴을 위한 시드
+const RECOIL_PATTERN_SEED = 20260821;
+let recoilRandomState = RECOIL_PATTERN_SEED;
+
+// 시드 초기화
+function resetRecoilRandom(round) {
+    recoilRandomState = (RECOIL_PATTERN_SEED + round * 1000) >>> 0;
+}
+
+// 반동 전용 랜덤
+function recoilRandom() {
+    recoilRandomState += 0x6D2B79F5;
+
+    let t = recoilRandomState;
+    t = Math.imul (
+        t ^ (t >>> 15),
+        t | 1
+    );
+    t ^= t + Math.imul (
+        t ^ (t >>> 7),
+        t | 61
+    );
+    return (
+        (t ^ (t >>> 14)) >>> 0
+    ) / 4294967296;
+}
+
+// 반동 전용 범위 랜덤
+function recoilRandomRange(min, max) {
+    return (
+        recoilRandom() * (max - min)
+    ) + min;
+}
+
+// 반동 전용 정수 랜덤
+function recoilRandomInt(min, max) {
+    return Math.floor (
+        recoilRandomRange (
+            min, max + 1
+        )
+    );
+}
+
+// 반동 전용 평균 랜덤
+function recoilAverageRandom(min, max) {
+    const a = recoilRandom();
+    const b = recoilRandom();
+
+    return (
+        min + ((a + b) / 2) * (max - min)
+    );
+}
+
 // 중앙 이탈 추적
 let roundTracking = null;
 
@@ -288,6 +370,12 @@ let previousTestSummary = null;
 
 // 마지막 추천값
 let lastRecommendation = null;
+
+// 추천값 적용 후 재테스트 대기 정보
+let pendingRecommendationTest = null;
+
+// 현재 테스트가 추천값 검증 테스트인지 여부
+let isRecommendationRetest = false;
 
 // 테스트 당시 설정
 let testSensitivity = {
@@ -594,6 +682,35 @@ startBtn.addEventListener("click", async () => {
         stance: stanceInput.value
     };
 
+    // 이번 테스트가 추천값 적용 후 재테스트인지 확인
+    const currentSignature =
+        getCurrentTestSignature();
+
+    isRecommendationRetest =
+        pendingRecommendationTest !== null &&
+        pendingRecommendationTest.signature ===
+            currentSignature &&
+        pendingRecommendationTest.sight ===
+            sight &&
+        pendingRecommendationTest.ads ===
+            ads &&
+        Math.abs(
+            pendingRecommendationTest.vertical -
+            vertical
+        ) < 0.001 &&
+        (
+            !sightData.magnified ||
+            pendingRecommendationTest.scope ===
+                scope
+        );
+
+    if (
+        pendingRecommendationTest &&
+        !isRecommendationRetest
+    ) {
+        pendingRecommendationTest = null;
+    }
+
     currentRound = 0;
     currentBullet = 0;
     roundResults = [];
@@ -609,6 +726,8 @@ startBtn.addEventListener("click", async () => {
     testSessionActive = true;
 
     await enterFullscreenTest();
+
+    updateResolutionUI();
 
     requestPointerLock();
 
@@ -819,11 +938,13 @@ function startRound() {
 
     roundTracking = createRoundTracking();
 
+    resetRecoilRandom(currentRound);
+
     horizontalDirection =
-        Math.random() < 0.5 ? -1 : 1;
+        recoilRandom() < 0.5 ? -1 : 1;
 
     shotsUntilDirectionChange =
-        randomInt(2, 5);
+        recoilRandomInt(2, 5);
 
     const recoil = getCurrentRecoilProfile();
     const shotInterval = 60000 / recoil.rpm;
@@ -919,7 +1040,7 @@ function fireBullet() {
 
     // 수직 반동
     const verticalRandom =
-        averageRandom(
+        recoilAverageRandom(
             0.88,
             1.14
         );
@@ -933,22 +1054,22 @@ function fireBullet() {
     shotsUntilDirectionChange--;
 
     if (shotsUntilDirectionChange <= 0) {
-        if (Math.random() < 0.78) {
+        if (recoilRandom() < 0.78) {
             horizontalDirection *= -1;
         }
 
         shotsUntilDirectionChange =
-            randomInt(2, 6);
+            recoilRandomInt(2, 6);
     }
 
     const horizontalRandom =
-        averageRandom(
+        recoilAverageRandom(
             0.60,
             1.38
         );
 
     const horizontalNoise =
-        randomRange(
+        recoilRandomRange(
             -0.35,
             0.35
         ) *
@@ -962,9 +1083,11 @@ function fireBullet() {
             recoil.horizontalChaos
         ) +
         horizontalNoise;
-
-    dotY -= verticalKick;
-    dotX += horizontalKick;
+    
+    const resolutionScale = getResolutionScale();
+    
+    dotY -= verticalKick * resolutionScale;
+    dotX += horizontalKick * resolutionScale;
 
     statusText.textContent =
         `TEST ${currentRound} | ${currentBullet} / ${MAGAZINE_SIZE}`;
@@ -1010,15 +1133,20 @@ document.addEventListener("mousemove", (e) => {
     const sensitivity =
         getSensitivityMultiplier();
 
+    const resolutionScale =
+        getResolutionScale();
+
     dotX +=
         moveX *
         MOUSE_INPUT_SCALE *
-        sensitivity.horizontal;
+        sensitivity.horizontal *
+        resolutionScale;
 
     dotY +=
         moveY *
         MOUSE_INPUT_SCALE *
-        sensitivity.vertical;
+        sensitivity.vertical *
+        resolutionScale;
 
     updateRedDot();
 });
@@ -1336,6 +1464,8 @@ function saveRoundResult() {
         roundTracking.insideTime +
         roundTracking.outsideTime;
 
+    const resolutionScale = getResolutionScale();
+
     const centerRate =
         totalTrackedTime > 0
             ? (
@@ -1359,19 +1489,19 @@ function saveRoundResult() {
 
     roundResults.push({
         horizontalError:
-            horizontalError / count,
+        (horizontalError / count) / resolutionScale,
 
         verticalError:
-            verticalError / count,
+            (verticalError / count) / resolutionScale,
 
         verticalDirection:
-            verticalDirection / count,
+            (verticalDirection / count) / resolutionScale,
 
         horizontalDirection:
-            horizontalDirectionAverage / count,
+            (horizontalDirectionAverage / count) / resolutionScale,
 
         averageDistance:
-            totalDistance / count,
+            (totalDistance / count) / resolutionScale,
 
         centerRate,
 
@@ -1385,12 +1515,13 @@ function saveRoundResult() {
             roundTracking.outsideTime,
 
         outsideDistanceTime:
-            roundTracking.outsideDistanceTime,
+            roundTracking.outsideDistanceTime / resolutionScale,
 
-        averageOutsideDistance,
+        averageOutsideDistance :
+            averageOutsideDistance / resolutionScale,
 
         maxOutsideDistance:
-            roundTracking.maxOutsideDistance,
+            roundTracking.maxOutsideDistance / resolutionScale,
 
         returnTimeSum,
 
@@ -1844,7 +1975,7 @@ function analyzeAverage() {
         );
 
     const centerRadius =
-        getCenterRadius();
+        getCenterRadius() / getResolutionScale();
 
     const verticalDeadzone =
         centerRadius * 0.35;
@@ -2030,27 +2161,76 @@ function analyzeAverage() {
         getCurrentTestSignature();
 
     let comparisonMessage =
-        "동일한 총기 설정의 이전 테스트 기록이 없습니다.";
+    "동일한 총기 설정의 이전 테스트 기록이 없습니다.";
 
     if (
         previousTestSummary &&
-        previousTestSummary.signature ===
-            signature
+        previousTestSummary.signature === signature
     ) {
-        const difference =
+        // 높을수록 좋은 값
+        const centerDifference =
             avgCenterRate -
             previousTestSummary.centerRate;
 
-        if (difference >= 5) {
+        // 낮을수록 좋은 값
+        const verticalImprovement =
+            previousTestSummary.verticalError -
+            avgVertical;
+
+        const horizontalImprovement =
+            previousTestSummary.horizontalError -
+            avgHorizontal;
+
+        const returnTimeImprovement =
+            previousTestSummary.returnTime -
+            avgReturnTime;
+
+        let improvementScore = 0;
+
+        // 중앙 유지율
+        if (centerDifference >= 3) {
+            improvementScore++;
+        } else if (centerDifference <= -3) {
+            improvementScore--;
+        }
+
+        // 수직 오차
+        if (verticalImprovement >= 3) {
+            improvementScore++;
+        } else if (verticalImprovement <= -3) {
+            improvementScore--;
+        }
+
+        // 수평 오차
+        if (horizontalImprovement >= 3) {
+            improvementScore++;
+        } else if (horizontalImprovement <= -3) {
+            improvementScore--;
+        }
+
+        // 중앙 복귀 시간
+        if (returnTimeImprovement >= 80) {
+            improvementScore++;
+        } else if (returnTimeImprovement <= -80) {
+            improvementScore--;
+        }
+
+        if (improvementScore >= 2) {
             comparisonMessage =
-                `이전 테스트보다 중앙 유지율이 ${difference.toFixed(0)}%p 향상되었습니다. 감도가 더 안정적인 방향으로 이동하고 있습니다.`;
-        } else if (difference <= -5) {
+                "이전 테스트보다 전체적인 반동 제어가 향상되었습니다. ";
+        } else if (improvementScore <= -2) {
             comparisonMessage =
-                `이전 테스트보다 중앙 유지율이 ${Math.abs(difference).toFixed(0)}%p 감소했습니다. 이전 감도가 더 잘 맞았을 가능성이 있습니다.`;
+                "이전 테스트보다 전체적인 반동 제어가 감소했습니다. ";
         } else {
             comparisonMessage =
-                `이전 테스트와 중앙 유지율 차이가 ${Math.abs(difference).toFixed(0)}%p로 비슷한 수준입니다. 한 번 더 테스트해 평균을 확인하는 것을 추천합니다.`;
+                "이전 테스트와 전체적인 제어 성능이 비슷합니다. ";
         }
+
+        comparisonMessage +=
+            `중앙 유지율 ${previousTestSummary.centerRate.toFixed(0)}% → ${avgCenterRate.toFixed(0)}%, ` +
+            `수직 오차 ${previousTestSummary.verticalError.toFixed(1)} → ${avgVertical.toFixed(1)}px, ` +
+            `수평 오차 ${previousTestSummary.horizontalError.toFixed(1)} → ${avgHorizontal.toFixed(1)}px, ` +
+            `복귀 시간 ${(previousTestSummary.returnTime / 1000).toFixed(2)} → ${(avgReturnTime / 1000).toFixed(2)}초`;
     }
 
     comparisonText.textContent =
@@ -2058,8 +2238,20 @@ function analyzeAverage() {
 
     previousTestSummary = {
         signature,
-        centerRate:
-            avgCenterRate
+
+        // 분석 결과
+        centerRate : avgCenterRate,
+        horizontalError : avgHorizontal,
+        verticalError : avgVertical,
+        averageDistance : avgDistance,
+        outsideDistance : avgOutsideDistance,
+        returnTime : avgReturnTime,
+
+        // 당시 감도
+        general : currentGeneral,
+        ads : currentADS,
+        vertical : currentVertical,
+        scope : currentScope
     };
 
     // 피드백
@@ -2299,6 +2491,26 @@ applyRecommendBtn.addEventListener(
                     );
             }
         }
+
+        // 추천값 적용 후 재테스트할 값 기억
+        pendingRecommendationTest = {
+            ads: Number(adsInput.value),
+            vertical: Number(verticalInput.value),
+
+            scope:
+                SIGHTS[lastRecommendation.sight].magnified
+                    ? Number(
+                        scopeSensitivityValues[
+                            lastRecommendation.sight
+                        ]
+                    )
+                    : null,
+
+            sight: lastRecommendation.sight,
+
+            // 총기 / 조준경 / 파츠 / 자세까지 기억
+            signature: getCurrentTestSignature()
+        };
 
         applyRecommendBtn.disabled =
             true;
