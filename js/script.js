@@ -43,6 +43,7 @@ const verticalControlText = document.querySelector("#verticalControl");
 const horizontalControlText = document.querySelector("#horizontalControl");
 const stabilityText = document.querySelector("#stability");
 const comparisonText = document.querySelector("#comparison");
+const historyList = document.querySelector("#historyList");
 
 // 추천
 const recommendGrid = document.querySelector(".recommend_grid");
@@ -394,6 +395,338 @@ let testWeaponSetting = {
     stance: "stand"
 };
 
+// 사용자 설정 저장 키
+const SETTINGS_STORAGE_KEY = "tryxUserSettings";
+
+// 현재 설정 저장
+function saveUserSettings() {
+    const settings = {
+        dpi : Number(dpiInput.value),
+        general : Number(generalInput.value),
+        ads : Number(adsInput.value),
+        vertical : Number(verticalInput.value),
+
+        weapon : weaponInput.value,
+        sight : sightInput.value,
+        muzzle : muzzleInput.value,
+        grip : gripInput.value,
+        stance : stanceInput.value,
+
+        scopeSensitivityValues : {
+            ...scopeSensitivityValues
+        }
+    };
+
+    localStorage.setItem (
+        SETTINGS_STORAGE_KEY, JSON.stringify(settings)
+    );
+}
+
+// 저장된 설정 불러오기
+function loadUserSettings() {
+    const saved = localStorage.getItem (
+        SETTINGS_STORAGE_KEY
+    );
+
+    if (!saved) {
+        return;
+    }
+
+    try {
+        const settings =
+            JSON.parse(saved);
+
+        if (settings.dpi !== undefined) {
+            dpiInput.value =
+                settings.dpi;
+        }
+
+        if (settings.general !== undefined) {
+            generalInput.value =
+                settings.general;
+        }
+
+        if (settings.ads !== undefined) {
+            adsInput.value =
+                settings.ads;
+        }
+
+        if (settings.vertical !== undefined) {
+            verticalInput.value =
+                settings.vertical;
+        }
+
+        if (
+            settings.weapon &&
+            WEAPONS[settings.weapon]
+        ) {
+            weaponInput.value =
+                settings.weapon;
+        }
+
+        if (
+            settings.sight &&
+            SIGHTS[settings.sight]
+        ) {
+            sightInput.value =
+                settings.sight;
+        }
+
+        if (
+            settings.muzzle &&
+            MUZZLES[settings.muzzle]
+        ) {
+            muzzleInput.value =
+                settings.muzzle;
+        }
+
+        if (
+            settings.grip &&
+            GRIPS[settings.grip]
+        ) {
+            gripInput.value =
+                settings.grip;
+        }
+
+        if (
+            settings.stance &&
+            STANCES[settings.stance]
+        ) {
+            stanceInput.value =
+                settings.stance;
+        }
+
+        if (
+            settings.scopeSensitivityValues
+        ) {
+            Object.assign(
+                scopeSensitivityValues,
+                settings.scopeSensitivityValues
+            );
+        }
+
+        updateWeaponInfo();
+        updateAttachmentAvailability();
+        updateScopeSensitivityUI();
+        updateRecommendationScopeCard();
+
+        } catch (error) {
+            console.error (
+                "TRYX 설정 불러오기 실패 :", error
+            );
+        }
+    }
+
+// 기본 감도 변경 시 자동 저장
+[
+    dpiInput,
+    generalInput,
+    adsInput,
+    verticalInput
+].forEach((input) => {
+    input.addEventListener(
+        "input",
+        saveUserSettings
+    );
+});
+
+// 총기 설정 변경 시 자동 저장
+[
+    weaponInput,
+    sightInput,
+    muzzleInput,
+    gripInput,
+    stanceInput
+].forEach((select) => {
+    select.addEventListener(
+        "change",
+        saveUserSettings
+    );
+});
+
+// 페이지 시작 시 마지막 설정 복원
+loadUserSettings();
+
+// 최근 테스트 기록
+const HISTORY_STORAGE_KEY = "tryxTestHistory";
+const MAX_HISTORY_COUNT = 5;
+
+// 기록 불러오기
+function getTestHistory() {
+    const saved = localStorage.getItem (
+        HISTORY_STORAGE_KEY
+    );
+
+    if (!saved) {
+        return [];
+    }
+
+    try {
+        const history = JSON.parse(saved);
+        return Array.isArray(history) ? history : [];
+    } catch (error) {
+        console.error (
+            "TRYX 테스트 기록 불러오기 실패 :", error
+        );
+        return [];
+    }
+}
+
+// 최근 테스트 저장
+function saveTestHistory(record) {
+    const history = getTestHistory();
+    history.unshift(record);
+
+    const limitedHistory = history.slice (
+        0,
+        MAX_HISTORY_COUNT
+    );
+
+    localStorage.setItem (
+        HISTORY_STORAGE_KEY,
+        JSON.stringify(limitedHistory)
+    );
+
+    renderTestHistory();
+}
+
+function getMuzzleName(value) {
+    const names = {
+        none: "총구 없음",
+        compensator: "보정기",
+        muzzleBrake: "제동기",
+        flashHider: "소염기",
+        suppressor: "소음기"
+    };
+
+    return names[value] || value;
+}
+
+
+function getGripName(value) {
+    const names = {
+        none: "손잡이 없음",
+        vertical: "수직 손잡이",
+        tilted: "틸티드 그립",
+        half: "하프 그립",
+        thumb: "엄지 그립"
+    };
+
+    return names[value] || value;
+}
+
+
+function getStanceName(value) {
+    const names = {
+        stand: "서서 사격",
+        crouch: "앉아서 사격"
+    };
+
+    return names[value] || value;
+}
+
+// 최근 테스트 화면 출력
+function renderTestHistory() {
+    if (!historyList) {
+        return;
+    }
+
+    const history = getTestHistory();
+    historyList.innerHTML = "";
+
+    if (history.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "history_empty";
+        empty.textContent = "아직 저장된 테스트 기록이 없습니다.";
+        historyList.appendChild (
+            empty
+        );
+        return;
+    }
+
+    history.forEach(
+        (record, index) => {
+            const item = document.createElement("div");
+            item.className = "history_item";
+            const date = new Date (
+                record.timestamp
+            );
+            const dateText = date.toLocaleString("ko-KR");
+            item.innerHTML = `
+                <div class="history_top">
+                    <strong class="history_weapon">
+                        #${history.length - index}
+                        ${record.weaponName}
+                        / ${record.sightName}
+                    </strong>
+                    <span class="history_date">
+                        ${dateText}
+                    </span>
+                </div>
+
+                <p class="history_setting">
+                    ${record.muzzleName}
+                    / ${record.gripName}
+                    / ${record.stanceName}
+                    <br>
+                    ${record.aimSensitivityName}
+                    ${record.aimSensitivity}
+                    /
+                    수직 감도 배수
+                    ${record.vertical.toFixed(2)}
+                </p>
+                <div class="history_result">
+                    <div>
+                        <span>중앙 유지율</span>
+                        <strong>
+                            ${record.centerRate.toFixed(0)}%
+                        </strong>
+                    </div>
+
+                    <div>
+                        <span>수평 오차</span>
+                        <strong>
+                            ${record.horizontalError.toFixed(1)}px
+                        </strong>
+                    </div>
+
+                    <div>
+                        <span>수직 오차</span>
+                        <strong>
+                            ${record.verticalError.toFixed(1)}px
+                        </strong>
+                    </div>
+
+                    <div>
+                        <span>복귀 시간</span>
+                        <strong>
+                            ${(record.returnTime / 1000).toFixed(2)}초
+                        </strong>
+                    </div>
+                </div>
+
+                <p class="history_recommend">
+                    추천:
+                    <strong>
+                        ${record.aimSensitivityName}
+                        ${record.recommendedAimSensitivity}
+                        /
+                        수직 감도
+                        ${record.recommendedVertical.toFixed(2)}
+                    </strong>
+                </p>
+            `;
+
+            historyList.appendChild(
+                item
+            );
+        } 
+    )
+}
+
+// 최근 테스트 기록 출력
+renderTestHistory();
+
 // 총기 정보
 weaponInput.addEventListener("change", () => {
     updateWeaponInfo();
@@ -461,6 +794,7 @@ function updateScopeSensitivityUI() {
 
         if (value > 0) {
             scopeSensitivityValues[sight] = value;
+            saveUserSettings();
         }
     });
 
@@ -2034,12 +2368,14 @@ function analyzeAverage() {
             totalVertical,
             1
         );
-
+    
+    // 좌우 감도를 왜 조정했는지 저장
+    let horizontalAdjustmentReason = "none";
+    
     const horizontalProblem =
-        avgHorizontal >
-            centerRadius * 1.5 ||
-        avgOutsideDistance >
-            centerRadius;
+        avgHorizontal > centerRadius * 0.85 || (
+            avgCenterRate < 70 && avgHorizontal > centerRadius * 0.60
+        );
 
     if (horizontalProblem) {
         const aimStrength =
@@ -2063,6 +2399,7 @@ function analyzeAverage() {
             horizontalCrossingsPerRound >= 8 ||
             movementRatio >= 0.70
         ) {
+            horizontalAdjustmentReason = "overCorrection";
             if (magnified) {
                 newScope *=
                     1 - aimStrength;
@@ -2084,6 +2421,7 @@ function analyzeAverage() {
             avgReturnTime >= 550 &&
             movementRatio < 0.35
         ) {
+            horizontalAdjustmentReason = "underResponse";
             const increase =
                 Math.min(
                     aimStrength,
@@ -2108,6 +2446,7 @@ function analyzeAverage() {
         else if (
             avgCenterRate < 50
         ) {
+            horizontalAdjustmentReason = "lowStability";
             const safeAdjustment =
                 Math.min(
                     strength * 0.35,
@@ -2120,6 +2459,48 @@ function analyzeAverage() {
             } else {
                 newADS *=
                     1 - safeAdjustment;
+            }
+        } else {
+             /*
+            좌우 이탈은 확인됐지만
+            과보정/보정 부족 방향이 명확하지 않은 경우
+
+            한쪽으로 치우쳐 있으면
+            좌우 보정 반응 부족 가능성 → 감도 소폭 증가
+
+            한쪽 치우침이 크지 않으면
+            좌우 흔들림 안정화를 위해 → 감도 소폭 감소
+            */
+           const horizontalFineAdjustment = 
+                Math.min (
+                    Math.max (
+                        aimStrength * 0.5, 0.02
+                    ), 0.04
+                );
+            
+            const horizontalBias = 
+            Math.abs (
+                avgHorizontalDirection
+            );
+
+            if (
+                horizontalBias > centerRadius * 0.30
+            ) {
+                horizontalAdjustmentReason = "oneSideBias";
+                // 한쪽으로 계속 밀림 -> 좌우 보정 반응 부족
+                if (magnified) {
+                    newScope *= 1 + horizontalFineAdjustment;
+                } else {
+                    newADS *= 1 + horizontalFineAdjustment;
+                }
+            } else {
+                horizontalAdjustmentReason = "oscillation";
+                // 좌우로 흔들리지만 한쪽 편향은 크지않음 -> 안정성을 위해 감도 감소
+                if (magnified) {
+                    newScope *= 1 - horizontalFineAdjustment;
+                } else {
+                    newADS *= 1 - horizontalFineAdjustment;
+                }
             }
         }
     }
@@ -2161,7 +2542,7 @@ function analyzeAverage() {
         getCurrentTestSignature();
 
     let comparisonMessage =
-    "동일한 총기 설정의 이전 테스트 기록이 없습니다.";
+        "동일한 총기 설정의 이전 테스트 기록이 없습니다.";
 
     if (
         previousTestSummary &&
@@ -2208,22 +2589,45 @@ function analyzeAverage() {
             improvementScore--;
         }
 
-        // 중앙 복귀 시간
+        // 복귀 시간
         if (returnTimeImprovement >= 80) {
             improvementScore++;
         } else if (returnTimeImprovement <= -80) {
             improvementScore--;
         }
 
-        if (improvementScore >= 2) {
-            comparisonMessage =
-                "이전 테스트보다 전체적인 반동 제어가 향상되었습니다. ";
-        } else if (improvementScore <= -2) {
-            comparisonMessage =
-                "이전 테스트보다 전체적인 반동 제어가 감소했습니다. ";
-        } else {
-            comparisonMessage =
-                "이전 테스트와 전체적인 제어 성능이 비슷합니다. ";
+        /*
+            추천값을 실제 적용한 뒤
+            다시 테스트한 경우
+        */
+        if (isRecommendationRetest) {
+            if (improvementScore >= 2) {
+                comparisonMessage =
+                    "추천 감도 검증 성공 - 이전 감도보다 전체적인 반동 제어가 향상되었습니다. 현재 감도를 기준으로 추가 미세 조정을 진행할 수 있습니다.";
+            } else if (improvementScore <= -2) {
+                comparisonMessage =
+                    "추천 감도 검증 실패 - 이전 감도보다 전체적인 반동 제어가 불안정해졌습니다. 현재 추천값을 그대로 유지하기보다는 이전 감도로 돌아가거나 다시 조정하는 것을 추천합니다.";
+            } else {
+                comparisonMessage =
+                    "추천 감도 검증 보류 - 이전 감도와 현재 감도의 성능 차이가 크지 않습니다. 현재 결과만으로 감도 우위를 판단하기 어려우므로 한 번 더 테스트하는 것을 추천합니다.";
+            }
+        }
+
+        /*
+            추천값 재테스트가 아닌
+            일반적인 연속 테스트
+        */
+        else {
+            if (improvementScore >= 2) {
+                comparisonMessage =
+                    "이전 테스트보다 전체적인 반동 제어가 향상되었습니다. ";
+            } else if (improvementScore <= -2) {
+                comparisonMessage =
+                    "이전 테스트보다 전체적인 반동 제어가 감소했습니다. ";
+            } else {
+                comparisonMessage =
+                    "이전 테스트와 전체적인 제어 성능이 비슷합니다. ";
+            }
         }
 
         comparisonMessage +=
@@ -2235,6 +2639,8 @@ function analyzeAverage() {
 
     comparisonText.textContent =
         comparisonMessage;
+
+    
 
     previousTestSummary = {
         signature,
@@ -2253,6 +2659,89 @@ function analyzeAverage() {
         vertical : currentVertical,
         scope : currentScope
     };
+
+    // 최근 테스트 기록 저장
+    const currentSightData =
+        SIGHTS[
+            testWeaponSetting.sight
+        ];
+
+    const historyAimSensitivityName =
+        currentSightData.magnified
+            ? `${currentSightData.name} 감도`
+            : "스코프 모드 감도";
+
+    const historyAimSensitivity =
+        currentSightData.magnified
+            ? currentScope
+            : currentADS;
+
+    const historyRecommendedAimSensitivity =
+        currentSightData.magnified
+            ? Math.round(newScope)
+            : Math.round(newADS);
+
+    saveTestHistory({
+        timestamp: Date.now(),
+
+        weaponName:
+            WEAPONS[
+                testWeaponSetting.weapon
+            ].name,
+
+        sightName:
+            currentSightData.name,
+
+        muzzleName:
+            getMuzzleName(
+                testWeaponSetting.muzzle
+            ),
+
+        gripName:
+            getGripName(
+                testWeaponSetting.grip
+            ),
+
+        stanceName:
+            getStanceName(
+                testWeaponSetting.stance
+            ),
+
+        aimSensitivityName:
+            historyAimSensitivityName,
+
+        aimSensitivity:
+            Math.round(
+                historyAimSensitivity
+            ),
+
+        vertical:
+            currentVertical,
+
+        centerRate:
+            avgCenterRate,
+
+        horizontalError:
+            avgHorizontal,
+
+        verticalError:
+            avgVertical,
+
+        returnTime:
+            avgReturnTime,
+
+        recommendedAimSensitivity:
+            historyRecommendedAimSensitivity,
+
+        recommendedVertical:
+            newVertical
+    });
+
+    // 추천값 검증 테스트가 끝났으면 상태 초기화
+    if (isRecommendationRetest) {
+        pendingRecommendationTest = null;
+        isRecommendationRetest = false;
+    }
 
     // 피드백
     let message = "";
@@ -2296,27 +2785,90 @@ function analyzeAverage() {
             "수직 방향의 평균 보정량은 비교적 균형이 맞습니다. ";
     }
 
-    if (magnified) {
+    // 좌우 제어 분석 피드백
+    const aimSensitivityName =
+        magnified
+            ? `${SIGHTS[testWeaponSetting.sight].name} 감도`
+            : "스코프 모드 감도";
+
+    const currentAimSensitivity =
+        magnified
+            ? Math.round(currentScope)
+            : Math.round(currentADS);
+
+    const recommendedAimSensitivity =
+        magnified
+            ? Math.round(newScope)
+            : Math.round(newADS);
+
+    // 실제 게임 입력 단위에서 값이 달라졌을 때
+    if (
+        currentAimSensitivity !==
+        recommendedAimSensitivity
+    ) {
         if (
-            Math.round(newScope) !==
-            Math.round(currentScope)
+            horizontalAdjustmentReason ===
+            "overCorrection"
         ) {
             message +=
-                `${SIGHTS[testWeaponSetting.sight].name} 감도는 ${Math.round(currentScope)}에서 ${Math.round(newScope)}로 조정하는 것을 추천합니다.`;
-        } else {
-            message +=
-                `${SIGHTS[testWeaponSetting.sight].name} 감도는 현재값을 유지합니다.`;
+                `좌우 중앙을 반복적으로 넘거나 좌우 보정량이 큰 과보정 경향이 확인됩니다. ` +
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 낮춰 좌우 흔들림을 줄이는 것을 추천합니다.`;
         }
-    } else {
-        if (
-            Math.round(newADS) !==
-            Math.round(currentADS)
+
+        else if (
+            horizontalAdjustmentReason ===
+            "underResponse"
         ) {
             message +=
-                `ADS 감도는 ${Math.round(currentADS)}에서 ${Math.round(newADS)}로 조정하는 것을 추천합니다.`;
+                `좌우 보정 움직임이 적고 중앙 복귀가 느려 좌우 반응이 부족한 경향이 확인됩니다. ` +
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 높여 중앙 복귀 반응을 개선하는 것을 추천합니다.`;
+        }
+
+        else if (
+            horizontalAdjustmentReason ===
+            "lowStability"
+        ) {
+            message +=
+                `좌우 오차와 낮은 중앙 유지율이 함께 확인되어 좌우 제어 안정성이 부족합니다. ` +
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 낮춰 안정성을 높이는 것을 추천합니다.`;
+        }
+
+        else if (
+            horizontalAdjustmentReason ===
+            "oneSideBias"
+        ) {
+            message +=
+                `조준점이 한쪽으로 치우치는 경향이 확인되어 좌우 보정 반응이 부족할 가능성이 있습니다. ` +
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 높여 좌우 보정 반응을 개선하는 것을 추천합니다.`;
+        }
+
+        else if (
+            horizontalAdjustmentReason ===
+            "oscillation"
+        ) {
+            message +=
+                `좌우 이탈이 확인되며 한쪽 편향보다는 좌우 왕복 흔들림이 두드러집니다. ` +
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 낮춰 좌우 움직임을 안정시키는 것을 추천합니다.`;
+        }
+
+        else {
+            message +=
+                `${aimSensitivityName}를 ${currentAimSensitivity}에서 ${recommendedAimSensitivity}로 조정하는 것을 추천합니다.`;
+        }
+    }
+
+    // 내부적으로 문제가 감지됐어도
+    // 게임 입력 단위에서 값이 같다면 유지
+    else {
+        if (
+            horizontalProblem &&
+            horizontalAdjustmentReason !== "none"
+        ) {
+            message +=
+                `좌우 제어에서 미세한 조정 필요성이 감지되었지만 변경 폭이 작아 ${aimSensitivityName}는 현재값 ${currentAimSensitivity}을 유지합니다.`;
         } else {
             message +=
-                "ADS 감도는 현재값을 유지합니다.";
+                `${aimSensitivityName}는 현재값을 유지합니다.`;
         }
     }
 
@@ -2511,6 +3063,8 @@ applyRecommendBtn.addEventListener(
             // 총기 / 조준경 / 파츠 / 자세까지 기억
             signature: getCurrentTestSignature()
         };
+
+        saveUserSettings();
 
         applyRecommendBtn.disabled =
             true;

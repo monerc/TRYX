@@ -367,48 +367,6 @@ section h2 {
     margin-top: 15px;
 }
 
-/* 반응형 */
-@media (max-width: 1150px) {
-    #wrap {
-        width: 90%;
-    }
-}
-
-@media (max-width: 800px) {
-    .setting_grid,
-    .weapon_grid,
-    .result_grid,
-    .detail_grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .control_result,
-    .recommend_grid {
-        grid-template-columns: 1fr;
-    }
-
-    #aimArea {
-        height: 450px;
-    }
-}
-
-@media (max-width: 520px) {
-    .setting_grid,
-    .weapon_grid,
-    .result_grid,
-    .detail_grid {
-        grid-template-columns: 1fr;
-    }
-
-    header h1 {
-        font-size: 27px;
-    }
-
-    section {
-        padding: 20px;
-    }
-}
-
 /* 전체화면 테스트 */
 .test:fullscreen {
     width: 100%;
@@ -451,4 +409,139 @@ section h2 {
     top: 25px;
     left: 25px;
     font-size: 16px;
+}
+
+/* 최근 테스트 기록 */
+.history_note {
+    margin-bottom : 15px;
+    color : #777;
+    font-size : 13px;
+}
+
+#historyList {
+    display : flex;
+    flex-direction: column;
+    gap : 12px;
+}
+
+.history_empty {
+    padding : 20px;
+    background: #111;
+    color : #777;
+    font-size : 14px;
+}
+
+.history_item {
+    padding : 18px 20px;
+    background: #111;
+    border : 1px solid #292929;
+}
+
+.history_top {
+    display : flex;
+    justify-content: space-between;
+    gap : 15px;
+    margin-bottom : 12px;
+}
+
+.history_weapon {
+    color : #f2a900;
+    font-size : 16px;
+    font-weight: bold;
+}
+
+.history_date {
+    color : #666;
+    font-size : 12px;
+}
+
+.history_setting {
+    margin-bottom : 12px;
+    color : #aaa;
+    font-size : 13px;
+    line-height: 1.7;
+}
+
+.history_result {
+    display : grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap : 10px;
+}
+
+.history_result div {
+    padding : 12px;
+    background: #181818;
+}
+
+.history_result span {
+    display : block;
+    margin-bottom: 6px;
+    color : #666;
+    font-size: 12px;
+}
+
+.history_result strong {
+    color : #fff;
+    font-size : 15px;
+}
+
+.history_recommend {
+    margin-top : 12px;
+    color : #aaa;
+    font-size : 13px;
+    line-height: 1.6;
+}
+
+.history_recommend strong {
+    color : #f2a900;
+}
+
+/* 반응형 */
+@media (max-width: 1150px) {
+    #wrap {
+        width: 90%;
+    }
+}
+
+@media (max-width: 800px) {
+    .setting_grid,
+    .weapon_grid,
+    .result_grid,
+    .detail_grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .control_result,
+    .recommend_grid {
+        grid-template-columns: 1fr;
+    }
+
+    #aimArea {
+        height: 450px;
+    }
+
+    .history_result {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 520px) {
+    .setting_grid,
+    .weapon_grid,
+    .result_grid,
+    .detail_grid {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 27px;
+    }
+
+    section {
+        padding: 20px;
+    }
+
+    .history_result {
+        grid-template-columns: 1fr;
+    }
 }
