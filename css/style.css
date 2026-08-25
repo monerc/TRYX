@@ -496,6 +496,80 @@ section h2 {
     color : #f2a900;
 }
 
+#clearHistoryBtn {
+    margin-bottom : 15px;
+    padding : 10px 16px;
+    background: #191919;
+    border : 1px solid #444;
+    color : #aaa;
+    font-size : 13px;
+    cursor : pointer;
+}
+
+#clearHistoryBtn:hover {
+    border-color : #f2a900;
+    color : #f2a900;
+}
+
+.history_compare {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #292929;
+}
+
+.history_compare_title {
+    display: block;
+    margin-bottom: 12px;
+    color: #aaa;
+    font-size: 13px;
+}
+
+.history_compare_grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+
+.history_compare_grid > div {
+    padding: 10px 12px;
+    background: #181818;
+}
+
+.history_compare_grid span {
+    display: block;
+    margin-bottom: 6px;
+    color: #666;
+    font-size: 11px;
+}
+
+.history_compare_grid p {
+    margin-bottom: 5px;
+    color: #ddd;
+    font-size: 12px;
+}
+
+.history_compare_grid strong {
+    font-size: 12px;
+}
+
+.history_compare_grid .improved {
+    color: #58c77b;
+}
+
+.history_compare_grid .worse {
+    color: #e56565;
+}
+
+.history_compare_grid .same {
+    color: #888;
+}
+
+.history_compare_none {
+    color: #666;
+    font-size: 12px;
+}
+
+
 /* 반응형 */
 @media (max-width: 1150px) {
     #wrap {
@@ -523,6 +597,10 @@ section h2 {
     .history_result {
         grid-template-columns: repeat(2, 1fr);
     }
+
+    .history_compare_grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
 
 @media (max-width: 520px) {
@@ -542,6 +620,10 @@ section h2 {
     }
 
     .history_result {
+        grid-template-columns: 1fr;
+    }
+
+    .history_compare_grid {
         grid-template-columns: 1fr;
     }
 }

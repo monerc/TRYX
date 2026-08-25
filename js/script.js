@@ -44,6 +44,7 @@ const horizontalControlText = document.querySelector("#horizontalControl");
 const stabilityText = document.querySelector("#stability");
 const comparisonText = document.querySelector("#comparison");
 const historyList = document.querySelector("#historyList");
+const clearHistoryBtn = document.querySelector("#clearHistoryBtn");
 
 // 추천
 const recommendGrid = document.querySelector(".recommend_grid");
@@ -70,8 +71,9 @@ const BASE_SENSITIVITY = 35;
 // 실제 마우스 움직임 반영량
 const MOUSE_INPUT_SCALE = 0.045;
 
-// 전체 반동 보정값
-const RECOIL_CALIBRATION = 1.00;
+// 수직, 수평 반동 보정값
+const VERTICAL_RECOIL_CALIBRATION = 0.50;
+const HORIZONTAL_RECOIL_CALIBRATION = 0.50;
 
 // TRYX 기준 테스트 영역
 const REFERENCE_AIM_WIDTH = 1818;
@@ -553,7 +555,7 @@ const MAX_HISTORY_COUNT = 5;
 
 // 기록 불러오기
 function getTestHistory() {
-    const saved = localStorage.getItem (
+    const saved = localStorage.getItem(
         HISTORY_STORAGE_KEY
     );
 
@@ -562,12 +564,35 @@ function getTestHistory() {
     }
 
     try {
-        const history = JSON.parse(saved);
-        return Array.isArray(history) ? history : [];
+        const history =
+            JSON.parse(saved);
+
+        if (!Array.isArray(history)) {
+            return [];
+        }
+
+        // 이전 버전 기록도 현재 필드명으로 자동 변환
+        return history.map((record) => ({
+            ...record,
+
+            verticalCalibration: Number(
+                record.verticalCalibration ??
+                record.verticalCAlibration ??
+                VERTICAL_RECOIL_CALIBRATION
+            ),
+
+            horizontalCalibration: Number(
+                record.horizontalCalibration ??
+                HORIZONTAL_RECOIL_CALIBRATION
+            )
+        }));
+
     } catch (error) {
-        console.error (
-            "TRYX 테스트 기록 불러오기 실패 :", error
+        console.error(
+            "TRYX 테스트 기록 불러오기 실패 :",
+            error
         );
+
         return [];
     }
 }
@@ -625,6 +650,48 @@ function getStanceName(value) {
     return names[value] || value;
 }
 
+// 테스트 기록 비교 조건 확인
+function canCompareHistory (current, previous) {
+    if (!previous) {
+        return false;
+    }
+
+    return (
+        current.weaponName === previous.weaponName &&
+        current.sightName === previous.sightName &&
+        current.muzzleName === previous.muzzleName &&
+        current.gripName === previous.gripName &&
+        current.stanceName === previous.stanceName &&
+        Number(current.dpi) === Number(previous.dpi) &&
+        Number(current.verticalCalibration) === Number(previous.verticalCalibration) &&
+        Number(current.horizontalCalibration) === Number(previous.horizontalCalibration)
+    );
+}
+
+// 비교 상태 생성
+function getHistoryCompareStatus (current, previous, higherIsBetter) {
+    if (current === previous) {
+        return {
+            text : "유지",
+            className : "same"
+        };
+    }
+
+    const improved = higherIsBetter
+        ? current > previous
+        : current < previous;
+    
+    return {
+        text : improved
+            ? "▲ 개선"
+            : "▼ 악화",
+
+        className : improved
+            ? "improved"
+            : "worse"
+    };
+}
+
 // 최근 테스트 화면 출력
 function renderTestHistory() {
     if (!historyList) {
@@ -652,6 +719,180 @@ function renderTestHistory() {
                 record.timestamp
             );
             const dateText = date.toLocaleString("ko-KR");
+            const previousRecord =
+                history[index + 1];
+            let comparisonHTML = "";
+
+            // 가장 첫 테스트
+            if (!previousRecord) {
+                comparisonHTML = `
+                    <div class="history_compare history_compare_none">
+                        비교할 이전 테스트가 없습니다.
+                    </div>
+                `;
+            }
+
+            // 조건이 다른 테스트
+            else if (
+                !canCompareHistory(
+                    record,
+                    previousRecord
+                )
+            ) {
+                comparisonHTML = `
+                    <div class="history_compare history_compare_none">
+                        이전 테스트와 조건이 달라 직접 비교하지 않습니다.
+                    </div>
+                `;
+            }
+
+            // 동일 조건 테스트
+            else {
+                const currentCenter =
+                    Number(
+                        record.centerRate.toFixed(0)
+                    );
+
+                const previousCenter =
+                    Number(
+                        previousRecord.centerRate.toFixed(0)
+                    );
+
+
+                const currentHorizontal =
+                    Number(
+                        record.horizontalError.toFixed(1)
+                    );
+
+                const previousHorizontal =
+                    Number(
+                        previousRecord.horizontalError.toFixed(1)
+                    );
+
+
+                const currentVertical =
+                    Number(
+                        record.verticalError.toFixed(1)
+                    );
+
+                const previousVertical =
+                    Number(
+                        previousRecord.verticalError.toFixed(1)
+                    );
+
+
+                const currentReturn =
+                    Number(
+                        (
+                            record.returnTime / 1000
+                        ).toFixed(2)
+                    );
+
+                const previousReturn =
+                    Number(
+                        (
+                            previousRecord.returnTime / 1000
+                        ).toFixed(2)
+                    );
+
+
+                const centerStatus =
+                    getHistoryCompareStatus(
+                        currentCenter,
+                        previousCenter,
+                        true
+                    );
+
+                const horizontalStatus =
+                    getHistoryCompareStatus(
+                        currentHorizontal,
+                        previousHorizontal,
+                        false
+                    );
+
+                const verticalStatus =
+                    getHistoryCompareStatus(
+                        currentVertical,
+                        previousVertical,
+                        false
+                    );
+
+                const returnStatus =
+                    getHistoryCompareStatus(
+                        currentReturn,
+                        previousReturn,
+                        false
+                    );
+
+                comparisonHTML = `
+                    <div class="history_compare">
+                        <strong class="history_compare_title">
+                            이전 동일 조건 테스트 대비
+                        </strong>
+
+                        <div class="history_compare_grid">
+
+                            <div>
+                                <span>중앙 유지율</span>
+
+                                <p>
+                                    ${previousCenter}%
+                                    →
+                                    ${currentCenter}%
+                                </p>
+
+                                <strong class="${centerStatus.className}">
+                                    ${centerStatus.text}
+                                </strong>
+                            </div>
+
+                            <div>
+                                <span>수평 오차</span>
+
+                                <p>
+                                    ${previousHorizontal}px
+                                    →
+                                    ${currentHorizontal}px
+                                </p>
+
+                                <strong class="${horizontalStatus.className}">
+                                    ${horizontalStatus.text}
+                                </strong>
+                            </div>
+
+                            <div>
+                                <span>수직 오차</span>
+
+                                <p>
+                                    ${previousVertical}px
+                                    →
+                                    ${currentVertical}px
+                                </p>
+
+                                <strong class="${verticalStatus.className}">
+                                    ${verticalStatus.text}
+                                </strong>
+                            </div>
+
+                            <div>
+                                <span>복귀 시간</span>
+
+                                <p>
+                                    ${previousReturn.toFixed(2)}초
+                                    →
+                                    ${currentReturn.toFixed(2)}초
+                                </p>
+
+                                <strong class="${returnStatus.className}">
+                                    ${returnStatus.text}
+                                </strong>
+                            </div>
+
+                        </div>
+                    </div>
+                `;
+            }
+
             item.innerHTML = `
                 <div class="history_top">
                     <strong class="history_weapon">
@@ -669,11 +910,17 @@ function renderTestHistory() {
                     / ${record.gripName}
                     / ${record.stanceName}
                     <br>
+                    DPI ${record.dpi}
+                    /
                     ${record.aimSensitivityName}
                     ${record.aimSensitivity}
                     /
                     수직 감도 배수
                     ${record.vertical.toFixed(2)}
+                    반동 보정
+                    수직 ${record.verticalCalibration.toFixed(2)}
+                    /
+                    수평 ${record.horizontalCalibration.toFixed(2)}
                 </p>
                 <div class="history_result">
                     <div>
@@ -715,6 +962,7 @@ function renderTestHistory() {
                         ${record.recommendedVertical.toFixed(2)}
                     </strong>
                 </p>
+                ${comparisonHTML}
             `;
 
             historyList.appendChild(
@@ -726,6 +974,23 @@ function renderTestHistory() {
 
 // 최근 테스트 기록 출력
 renderTestHistory();
+
+// 최근 테스트 기록 전체 삭제
+clearHistoryBtn.addEventListener("click", () => {
+    const confirmed = confirm (
+        "최근 테스트 기록을 모두 삭제하시겠습니까?"
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    localStorage.removeItem (
+        HISTORY_STORAGE_KEY
+    );
+
+    renderTestHistory();
+});
 
 // 총기 정보
 weaponInput.addEventListener("change", () => {
@@ -1153,7 +1418,7 @@ function getCurrentRecoilProfile() {
             grip.vertical *
             stance.vertical *
             sight.screenScale *
-            RECOIL_CALIBRATION,
+            VERTICAL_RECOIL_CALIBRATION,
 
         horizontal:
             weapon.horizontal *
@@ -1161,7 +1426,7 @@ function getCurrentRecoilProfile() {
             grip.horizontal *
             stance.horizontal *
             sight.screenScale *
-            RECOIL_CALIBRATION,
+            HORIZONTAL_RECOIL_CALIBRATION,
 
         buildup:
             weapon.buildup,
@@ -2683,6 +2948,15 @@ function analyzeAverage() {
 
     saveTestHistory({
         timestamp: Date.now(),
+
+        dpi:
+            testSensitivity.dpi,
+
+        verticalCalibration:
+            VERTICAL_RECOIL_CALIBRATION,
+        
+        horizontalCalibration:
+            HORIZONTAL_RECOIL_CALIBRATION,
 
         weaponName:
             WEAPONS[
