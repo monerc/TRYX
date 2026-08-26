@@ -19,6 +19,7 @@ body {
 /* HEADER */
 header {
     margin-bottom: 40px;
+
 }
 
 header h1 {
@@ -29,6 +30,36 @@ header h1 {
 header p {
     margin-top: 10px;
     color: #888;
+}
+
+.page_header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 30px;
+    margin-bottom: 40px;
+}
+
+.page_header_text {
+    flex: 1;
+}
+
+.home_btn {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    color: #999;
+    background: #181818;
+    border: 1px solid #333;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    text-decoration: none;
+    transition: 0.2s;
+}
+
+.home_btn:hover {
+    color: #f2a900;
+    border-color: #f2a900;
 }
 
 /* SECTION */
@@ -249,6 +280,25 @@ section h2 {
     color: #aaa;
     font-size: 14px;
     z-index: 20;
+}
+
+/* 카운트다운 */
+#countdownOverlay {
+    position: absolute;
+    left : 50%;
+    top : 50%;
+    transform : translate(-50%, -50%);
+    color : #f2a900;
+    font-size : 90px;
+    font-weight: bold;
+    text-shadow: 0 0 10px rgba(242, 169, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 30;
+}
+
+#countdownOverlay.show {
+    opacity: 1;
 }
 
 /* BUTTON */
@@ -613,6 +663,15 @@ section h2 {
 
     header h1 {
         font-size: 27px;
+    }
+
+    .page_header {
+        gap: 15px;
+    }
+
+    .home_btn {
+        padding: 8px 12px;
+        font-size: 11px;
     }
 
     section {

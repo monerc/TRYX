@@ -2,11 +2,13 @@
 const aimArea = document.querySelector("#aimArea");
 const testSection = document.querySelector("#testSection");
 const targetCenter = document.querySelector(".target_center");
+const countdownOverlay = document.querySelector("#countdownOverlay");
 const startBtn = document.querySelector("#startBtn");
 const applyRecommendBtn = document.querySelector("#applyRecommendBtn");
 const statusText = document.querySelector("#status");
 const roundText = document.querySelector("#roundText");
 const timeText = document.querySelector("#timeText");
+const ammoText = document.querySelector("#ammoText");
 const redDot = document.querySelector("#redDot");
 
 // 감도
@@ -72,8 +74,8 @@ const BASE_SENSITIVITY = 35;
 const MOUSE_INPUT_SCALE = 0.045;
 
 // 수직, 수평 반동 보정값
-const VERTICAL_RECOIL_CALIBRATION = 0.50;
-const HORIZONTAL_RECOIL_CALIBRATION = 0.50;
+const VERTICAL_RECOIL_CALIBRATION = 0.75;
+const HORIZONTAL_RECOIL_CALIBRATION = 0.75;
 
 // TRYX 기준 테스트 영역
 const REFERENCE_AIM_WIDTH = 1818;
@@ -98,9 +100,16 @@ function updateResolutionUI() {
     const targetScale =
         BASE_FULLSCREEN_TARGET_SCALE *
         resolutionScale;
+    console.log (
+        "현재 해상도 배율값은? ===>", resolutionScale
+    );
+
     testSection.style.setProperty (
         "--target-scale",
         targetScale
+    );
+    console.log (
+        "현재 타겟 크기 배율값은? ===>", targetScale
     );
 }
 
@@ -319,6 +328,9 @@ let recoilRandomState = RECOIL_PATTERN_SEED;
 // 시드 초기화
 function resetRecoilRandom(round) {
     recoilRandomState = (RECOIL_PATTERN_SEED + round * 1000) >>> 0;
+    console.log (
+        "반동 랜덤 시드 초기화값은? ===>", round, recoilRandomState
+    );
 }
 
 // 반동 전용 랜덤
@@ -422,6 +434,9 @@ function saveUserSettings() {
     localStorage.setItem (
         SETTINGS_STORAGE_KEY, JSON.stringify(settings)
     );
+    console.log(
+        "사용자 설정 저장값은 ===>", settings
+    );
 }
 
 // 저장된 설정 불러오기
@@ -437,6 +452,9 @@ function loadUserSettings() {
     try {
         const settings =
             JSON.parse(saved);
+        console.log (
+            "사용자 설정 불러온 값은? ===>", settings
+        );
 
         if (settings.dpi !== undefined) {
             dpiInput.value =
@@ -610,6 +628,9 @@ function saveTestHistory(record) {
     localStorage.setItem (
         HISTORY_STORAGE_KEY,
         JSON.stringify(limitedHistory)
+    );
+    console.log (
+        "최근 테스트 기록 저장값은? ===>", record
     );
 
     renderTestHistory();
@@ -1003,6 +1024,9 @@ function updateWeaponInfo() {
 
     selectedWeaponText.textContent = weapon.name;
     weaponRPMText.textContent = `${weapon.rpm} RPM`;
+    console.log (
+        "현재 선택 총기 정보값은? ===>", weapon
+    );
 }
 
 // 총기별 파츠 제한
@@ -1059,6 +1083,9 @@ function updateScopeSensitivityUI() {
 
         if (value > 0) {
             scopeSensitivityValues[sight] = value;
+            console.log (
+                "배율 감도 변경값은? ===>", sight, value
+            );
             saveUserSettings();
         }
     });
@@ -1117,6 +1144,9 @@ async function enterFullscreenTest() {
         if (!document.fullscreenElement) {
             await testSection.requestFullscreen();
         }
+        console.log (
+            "전체화면 진입 상태값은? ===>", document.fullscreenElement
+        );
 
         return true;
     } catch (error) {
@@ -1187,6 +1217,9 @@ document.addEventListener("pointerlockchange", () => {
 
 // 테스트 취소
 async function cancelTestSession(message) {
+    console.log(
+        "테스트 취소 사유값은? ===>", message
+    );
     testing = false;
     preparingRound = false;
     testSessionActive = false;
@@ -1195,6 +1228,10 @@ async function cancelTestSession(message) {
     clearInterval(countdownTimer);
     clearTimeout(roundTimer);
     clearTimeout(nextRoundTimer);
+    countdownOverlay.classList.remove (
+        "show"
+    );
+    countdownOverlay.textContent = "";
 
     aimArea.classList.remove("testing");
 
@@ -1205,6 +1242,7 @@ async function cancelTestSession(message) {
     roundResults = [];
 
     roundText.textContent = `0 / ${TOTAL_ROUNDS}`;
+    ammoText.textContent = `0 / ${MAGAZINE_SIZE}`;
     timeText.textContent = "0.0";
     statusText.textContent = "TEST CANCELLED";
 
@@ -1273,6 +1311,10 @@ startBtn.addEventListener("click", async () => {
         scope
     };
 
+    console.log(
+        "테스트 시작 감도값은? ===>", testSensitivity
+    );
+
     testWeaponSetting = {
         weapon: weaponInput.value,
         sight,
@@ -1280,6 +1322,10 @@ startBtn.addEventListener("click", async () => {
         grip: gripInput.value,
         stance: stanceInput.value
     };
+
+    console.log(
+        "테스트 시작 총기 설정값은? ===>", testWeaponSetting
+    );
 
     // 이번 테스트가 추천값 적용 후 재테스트인지 확인
     const currentSignature =
@@ -1474,6 +1520,56 @@ function createRoundTracking() {
     };
 }
 
+// ROUND 시작 카운트 다운
+function startReadyCountdown () {
+    let count = 3;
+    countdownOverlay.textContent = count;
+    countdownOverlay.classList.add (
+        "show"
+    );
+
+    statusText.textContent = `TEST ${currentRound} READY`;
+    console.log(
+        "카운트다운 시작 ROUND값은? ===>", currentRound
+    );
+
+    function nextCount () {
+        if (!testSessionActive) {
+            countdownOverlay.classList.remove (
+                "show"
+            );
+
+            countdownOverlay.textContent = "";
+
+            return;
+        }
+
+        if (count > 1) {
+            count--;
+            countdownOverlay.textContent = count;
+            nextRoundTimer = setTimeout (
+                nextCount,
+                1000
+            );
+
+            return;
+        }
+
+        // 1초 표시 후 바로 테스트 시작
+        countdownOverlay.classList.remove (
+            "show"
+        );
+        countdownOverlay.textContent = "";
+        preparingRound = false;
+        startRound();
+    }
+
+    nextRoundTimer = setTimeout (
+        nextCount,
+        1000
+    );
+}
+
 // 다음 ROUND
 function startNextRound() {
     if (!testSessionActive) {
@@ -1485,6 +1581,9 @@ function startNextRound() {
 
     roundText.textContent =
         `${currentRound} / ${TOTAL_ROUNDS}`;
+
+    ammoText.textContent = 
+        `0 / ${MAGAZINE_SIZE}`;
 
     statusText.textContent =
         `TEST ${currentRound} READY`;
@@ -1501,14 +1600,7 @@ function startNextRound() {
     timeText.textContent =
         (roundDuration / 1000).toFixed(1);
 
-    nextRoundTimer = setTimeout(() => {
-        if (!testSessionActive) {
-            return;
-        }
-
-        preparingRound = false;
-        startRound();
-    }, 900);
+    startReadyCountdown();
 }
 
 // ROUND 시작
@@ -1551,6 +1643,18 @@ function startRound() {
     const roundDuration =
         shotInterval *
         (MAGAZINE_SIZE - 1);
+    console.log(
+        `ROUND ${currentRound} 시작 반동 프로필값은? ===>`, recoil
+    );
+    console.log(
+        `ROUND ${currentRound} 발사 시간값은? ===>`,
+        {
+            shotInterval,
+            roundDuration,
+            magazineSize:
+                MAGAZINE_SIZE
+        }
+    );
 
     let remaining = roundDuration;
 
@@ -1631,6 +1735,9 @@ function fireBullet() {
 
     currentBullet++;
 
+    ammoText.textContent =
+        `${currentBullet} / ${MAGAZINE_SIZE}`;
+
     const burstMultiplier =
         getBurstMultiplier(
             currentBullet,
@@ -1687,6 +1794,15 @@ function fireBullet() {
     
     dotY -= verticalKick * resolutionScale;
     dotX += horizontalKick * resolutionScale;
+    console.log(
+        `ROUND ${currentRound} / BULLET ${currentBullet} 반동값은? ===>`,
+        {
+            verticalKick,
+            horizontalKick,
+            dotX,
+            dotY
+        }
+    );
 
     statusText.textContent =
         `TEST ${currentRound} | ${currentBullet} / ${MAGAZINE_SIZE}`;
@@ -2139,6 +2255,12 @@ function saveRoundResult() {
         totalVerticalMovement,
         netMouseY
     });
+    console.log(
+        `ROUND ${currentRound} 결과값은? ===>`,
+        roundResults[
+            roundResults.length - 1
+        ]
+    );
 }
 
 // 전체 테스트 완료
@@ -2168,6 +2290,10 @@ async function finishAllTests() {
 
     startBtn.textContent =
         "RESTART TEST";
+    console.log(
+        "전체 ROUND 결과값은? ===>",
+        roundResults
+    );
 
     analyzeAverage();
 
@@ -2386,6 +2512,26 @@ function analyzeAverage() {
         verticalCrossings /
         count;
 
+    console.log(
+        "전체 평균 분석값은? ===>",
+        {
+            avgHorizontal,
+            avgVertical,
+            avgVerticalDirection,
+            avgHorizontalDirection,
+            avgDistance,
+            avgCenterRate,
+            avgOutsideDistance,
+            avgReturnTime,
+            horizontalCrossingsPerRound,
+            verticalCrossingsPerRound,
+            totalMovement,
+            totalHorizontal,
+            totalVertical,
+            netVerticalInput
+        }
+    );
+
     // 결과 출력
     resultX.textContent =
         `${avgHorizontal.toFixed(1)} px`;
@@ -2451,6 +2597,18 @@ function analyzeAverage() {
 
         applyRecommendBtn.disabled =
             true;
+        
+        console.log(
+            "입력 부족 판정값은? ===>",
+            {
+                totalMovement,
+                totalVertical,
+                netVerticalInput,
+                NO_INPUT_DISTANCE,
+                NO_VERTICAL_INPUT,
+                MIN_NET_DOWNWARD_INPUT
+            }
+        );
 
         return;
     }
@@ -2534,7 +2692,15 @@ function analyzeAverage() {
 
     stabilityText.textContent =
         overallState;
-
+    console.log(
+        "제어 상태 판정값은? ===>",
+        {
+            verticalState,
+            horizontalState,
+            overallState
+        }
+    );
+    
     // 현재 설정
     const currentGeneral =
         testSensitivity.general;
@@ -2578,6 +2744,15 @@ function analyzeAverage() {
 
     const verticalDeadzone =
         centerRadius * 0.35;
+    
+    console.log(
+        "감도 조정 기준값은? ===>",
+        {
+            strength,
+            centerRadius,
+            verticalDeadzone
+        }
+    );
 
     // 수직 감도
     /*
@@ -2770,6 +2945,17 @@ function analyzeAverage() {
         }
     }
 
+    console.log(
+        "좌우 감도 분석값은? ===>",
+        {
+            horizontalProblem,
+            horizontalAdjustmentReason,
+            movementRatio,
+            avgHorizontalDirection,
+            horizontalCrossingsPerRound
+        }
+    );
+
     // 값 제한
     newVertical =
         clamp(
@@ -2793,6 +2979,21 @@ function analyzeAverage() {
                 100
             );
     }
+
+    console.log(
+        "최종 감도 추천 계산값은? ===>",
+        {
+            currentGeneral,
+            currentADS,
+            currentVertical,
+            currentScope,
+            newGeneral,
+            newADS,
+            newVertical,
+            newScope,
+            horizontalAdjustmentReason
+        }
+    );
 
     // 추천 출력
     showRecommendations(
@@ -2861,6 +3062,18 @@ function analyzeAverage() {
             improvementScore--;
         }
 
+        console.log(
+            "이전 테스트 비교 계산값은? ===>",
+            {
+                centerDifference,
+                verticalImprovement,
+                horizontalImprovement,
+                returnTimeImprovement,
+                improvementScore,
+                isRecommendationRetest
+            }
+        );
+
         /*
             추천값을 실제 적용한 뒤
             다시 테스트한 경우
@@ -2905,6 +3118,10 @@ function analyzeAverage() {
     comparisonText.textContent =
         comparisonMessage;
 
+    console.log(
+        "이전 테스트 비교 결과값은? ===>",
+        comparisonMessage
+    );
     
 
     previousTestSummary = {
@@ -3242,6 +3459,17 @@ function showRecommendations(
             verticalChanged ||
             scopeChanged
         );
+    console.log(
+        "추천 감도 출력값은? ===>",
+        {
+            lastRecommendation,
+            adsChanged,
+            verticalChanged,
+            scopeChanged,
+            applyButtonDisabled:
+                applyRecommendBtn.disabled
+        }
+    );
 }
 
 // 변경값 표시
@@ -3337,6 +3565,10 @@ applyRecommendBtn.addEventListener(
             // 총기 / 조준경 / 파츠 / 자세까지 기억
             signature: getCurrentTestSignature()
         };
+        console.log(
+            "추천값 적용 후 재테스트 대기값은? ===>",
+            pendingRecommendationTest
+        );
 
         saveUserSettings();
 
