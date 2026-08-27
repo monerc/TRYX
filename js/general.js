@@ -23,8 +23,15 @@ const feedback = document.querySelector("#feedback");
 
 // 기본 설정
 const TOTAL_TESTS = 15;
+const BASE_GENERAL_SENSITIVITY = 40;
+
 let currentTest = 0;
 let isTesting = false;
+
+let currentGeneralSensitivity = 40;
+let testSessionActive = false;
+let normalFullscreenExit = false;
+
 let crosshairX = 0;
 let crosshairY = 0;
 let targetX = 0;
@@ -34,6 +41,10 @@ let timerAnimation = null;
 let currentTrial = null;
 let testResults = [];
 let latestRecommendGeneral = null;
+
+function getGeneralSensitivityMultiplier() {
+    return currentGeneralSensitivity / BASE_GENERAL_SENSITIVITY;
+}
 
 // 테스트 타겟 위치
 const TARGET_POSITIONS = [
@@ -86,13 +97,34 @@ async function enterFullscreen() {
         if (!document.fullscreenElement) {
             await testSection.requestFullscreen();
         }
+
+        return true;
     } catch (error) {
-        console.log(
+        console.log (
             "전체화면 실행 실패 ===>",
             error
         );
+
+        return false;
     }
 }
+
+document.addEventListener("fullscreenchange", () => {
+    if (document.fullscreenElement) {
+        return;
+    }
+
+    if (normalFullscreenExit) {
+        normalFullscreenExit = false;
+        return;
+    }
+
+    if (testSessionActive) {
+        cancelTestSession(
+            "전체화면이 종료되어 테스트가 취소되었습니다."
+        );
+    }
+});
 
 // POINTER LOCK
 function requestPointerLock() {
@@ -103,6 +135,59 @@ function requestPointerLock() {
             "Pointer Lock 실행 실패 ===>",
             error
         );
+    }
+}
+
+document.addEventListener("pointerlockchange", () => {
+    if (
+        testSessionActive &&
+        !document.pointerLockElement
+    ) {
+        cancelTestSession(
+            "마우스 고정이 해제되어 테스트가 취소되었습니다."
+        );
+    }
+});
+
+async function cancelTestSession(message) {
+    if (!testSessionActive) {
+        return;
+    }
+
+    isTesting = false;
+    testSessionActive = false;
+
+    target.classList.remove("show");
+    aimArea.classList.remove("testing");
+    countdownOverlay.classList.remove("show");
+    countdownOverlay.textContent = "";
+
+    if (timerAnimation) {
+        cancelAnimationFrame(timerAnimation);
+        timerAnimation = null;
+    }
+
+    currentTest = 0;
+    currentTrial = null;
+    testResults = [];
+
+    roundText.textContent = `0 / ${TOTAL_TESTS}`;
+    timeText.textContent = "0.00";
+    statusText.textContent = "TEST CANCELLED";
+
+    dpiInput.disabled = false;
+    generalInput.disabled = false;
+
+    startBtn.disabled = false;
+    feedback.textContent = message;
+
+    if (document.pointerLockElement) {
+        document.exitPointerLock();
+    }
+
+    if (document.fullscreenElement) {
+        normalFullscreenExit = true;
+        await document.exitFullscreen();
     }
 }
 
@@ -148,6 +233,8 @@ startBtn.addEventListener("click", async () => {
         return;
     }
 
+    currentGeneralSensitivity = general;
+
     currentTest = 0;
     testResults = [];
     latestRecommendGeneral = null;
@@ -159,11 +246,23 @@ startBtn.addEventListener("click", async () => {
     generalInput.disabled = true;
 
     aimArea.classList.add("testing");
+    testSessionActive = true;
+    const fullscreenSuccess = await enterFullscreen();
 
-    await enterFullscreen();
+    if (!fullscreenSuccess) {
+        await cancelTestSession(
+            "전체화면을 실행할 수 없어 테스트가 취소되었습니다."
+        );
+        return;
+    }
+
     resetCrosshair();
     requestPointerLock();
     await startCountdown();
+
+    if (!testSessionActive) {
+        return;
+    }
 
     isTesting = true;
     statusText.textContent = "AIM";
@@ -173,7 +272,6 @@ startBtn.addEventListener("click", async () => {
 
 // 한 회차 시작
 function startTrial() {
-    resetCrosshair();
     const position =
         TARGET_POSITIONS[currentTest];
     target.style.left =
@@ -187,10 +285,8 @@ function startTrial() {
     targetY =
         aimArea.clientHeight *
         (position.y / 100);
-    const startX =
-        aimArea.clientWidth / 2;
-    const startY =
-        aimArea.clientHeight / 2;
+    const startX = crosshairX;
+    const startY = crosshairY;
     const vectorX =
         targetX - startX;
     const vectorY =
@@ -249,20 +345,18 @@ document.addEventListener(
             return;
         }
 
+        const rawMoveX = event.movementX;
+        const rawMoveY = event.movementY;
 
-        const moveX =
-            event.movementX;
+        const sensitivityMultiplier = getGeneralSensitivityMultiplier();
 
-        const moveY =
-            event.movementY;
-
+        const moveX = rawMoveX * sensitivityMultiplier;
+        const moveY = rawMoveY * sensitivityMultiplier;
 
         crosshairX += moveX;
         crosshairY += moveY;
 
-
         const padding = 10;
-
 
         crosshairX = clamp(
             crosshairX,
@@ -270,20 +364,17 @@ document.addEventListener(
             aimArea.clientWidth - padding
         );
 
-
         crosshairY = clamp(
             crosshairY,
             padding,
             aimArea.clientHeight - padding
         );
 
-
         updateCrosshair();
 
-
         analyzeMouseMovement(
-            moveX,
-            moveY
+            rawMoveX,
+            rawMoveY
         );
     }
 );
@@ -437,7 +528,7 @@ document.addEventListener(
     "mousedown",
     event => {
 
-        if (!isTesting) {
+        if (!isTesting || !currentTrial) {
             return;
         }
 
@@ -445,17 +536,14 @@ document.addEventListener(
             return;
         }
 
-
         const distance =
             Math.hypot(
                 crosshairX - targetX,
                 crosshairY - targetY
             );
 
-
         const targetRadius =
             target.offsetWidth / 2;
-
 
         if (
             distance >
@@ -475,7 +563,6 @@ document.addEventListener(
 
             return;
         }
-
 
         completeTrial();
     }
@@ -523,26 +610,15 @@ function completeTrial() {
 
     testResults.push({
         time: elapsedTime,
-
-        overshoot:
-            currentTrial.overshoot,
-
-        undershoot:
-            currentTrial.undershoot,
-
-        correctionCount:
-            currentTrial.correctionCount,
-
-        firstAccuracy:
-            firstAccuracyValue
+        overshoot: currentTrial.overshoot,
+        undershoot: currentTrial.undershoot,
+        correctionCount: currentTrial.correctionCount,
+        firstAccuracy: firstAccuracyValue
     });
 
-
+    currentTrial = null;
     target.classList.remove("show");
-
-
     currentTest++;
-
 
     if (
         currentTest >=
@@ -612,8 +688,7 @@ function updateTimer() {
         return;
     }
 
-
-    if (trialStartTime) {
+    if (currentTrial && trialStartTime) {
 
         const elapsed =
             (
@@ -627,7 +702,6 @@ function updateTimer() {
             elapsed.toFixed(2);
     }
 
-
     timerAnimation =
         requestAnimationFrame(
             updateTimer
@@ -638,6 +712,7 @@ function updateTimer() {
 function endTest() {
 
     isTesting = false;
+    testSessionActive = false;
 
     target.classList.remove("show");
 
@@ -664,13 +739,10 @@ function endTest() {
         document.exitPointerLock();
     }
 
-
-    if (
-        document.fullscreenElement
-    ) {
+    if (document.fullscreenElement) {
+        normalFullscreenExit = true;
         document.exitFullscreen();
     }
-
 
     dpiInput.disabled = false;
     generalInput.disabled = false;
