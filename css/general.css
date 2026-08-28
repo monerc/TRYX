@@ -205,6 +205,33 @@ section h2 {
     display: block;
 }
 
+#target::after {
+    content : "";
+    position: absolute;
+    left : 50%;
+    top : 50%;
+    width : 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: #a76f00;
+    transform: translate(-50%, -50%) scale(0);
+    pointer-events: none;
+}
+
+#target.holding::after {
+    animation: targetHoldProgress 1s linear forwards;
+}
+
+@keyframes targetHoldProgress {
+    from {
+        transform: translate(-50%, -50%) scale(0.15);
+    }
+
+    to {
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
 #countdownOverlay {
     position: absolute;
     left: 50%;

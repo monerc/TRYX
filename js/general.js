@@ -24,6 +24,7 @@ const feedback = document.querySelector("#feedback");
 // 기본 설정
 const TOTAL_TESTS = 15;
 const BASE_GENERAL_SENSITIVITY = 40;
+const TARGET_HOLD_TIME = 1000;
 
 let currentTest = 0;
 let isTesting = false;
@@ -41,6 +42,9 @@ let timerAnimation = null;
 let currentTrial = null;
 let testResults = [];
 let latestRecommendGeneral = null;
+let isHoldingTarget = false;
+let targetHoldTimer = null;
+let targetHitTime = null;
 
 function getGeneralSensitivityMultiplier() {
     return currentGeneralSensitivity / BASE_GENERAL_SENSITIVITY;
@@ -156,6 +160,13 @@ async function cancelTestSession(message) {
 
     isTesting = false;
     testSessionActive = false;
+    isHoldingTarget = false;
+    targetHitTime = null;
+    target.classList.remove("holding");
+    if (targetHoldTimer) {
+        clearTimeout(targetHoldTimer);
+        targetHoldTimer = null;
+    }
 
     target.classList.remove("show");
     aimArea.classList.remove("testing");
@@ -308,15 +319,18 @@ function startTrial() {
         targetDistance,
         unitX,
         unitY,
+        maxProgress: 0,
         overshoot: 0,
         undershoot: 0,
+        lastMoveTime: null,
+        hasStartedMoving: false,
         correctionCount: 0,
         lastDirection: 0,
+        lastCorrectionTime: 0,
         firstCorrection: false,
-        minDistanceBeforeCorrection:
-            targetDistance,
-        firstApproachDistance:
-            null
+        firstPattern: null,
+        minDistanceBeforeCorrection: targetDistance,
+        firstApproachDistance: null
     };
 
     trialStartTime =
@@ -379,128 +393,141 @@ document.addEventListener(
     }
 );
 
-// 마우스 움직임 분석
-function analyzeMouseMovement(
-    moveX,
-    moveY
-) {
+document.addEventListener("mouseup", event => {
+    if (event.button !== 0) {
+        return;
+    }
+    if (!isHoldingTarget) {
+        return
+    }
+    if (targetHoldTimer) {
+        clearTimeout(targetHoldTimer);
+        targetHoldTimer = null;
+    }
+    isHoldingTarget = false;
+    targetHitTime = null;
+    target.classList.remove("holding");
+    if (isTesting && currentTrial) {
+        statusText.textContent = "AIM";
+    }
+});
 
+// 마우스 움직임 분석
+function analyzeMouseMovement(moveX, moveY) {
     if (!currentTrial) {
         return;
     }
 
+    const distanceToTarget = Math.hypot(
+        crosshairX - targetX,
+        crosshairY - targetY
+    );
 
-    const distanceToTarget =
-        Math.hypot(
-            crosshairX - targetX,
-            crosshairY - targetY
+    if (!currentTrial.firstCorrection) {
+        currentTrial.minDistanceBeforeCorrection = Math.min(
+            currentTrial.minDistanceBeforeCorrection,
+            distanceToTarget
         );
+    }
 
+    const movementProjection = moveX * currentTrial.unitX + moveY * currentTrial.unitY;
+    
+    const now = performance.now();
+    const targetRadius = target.offsetWidth / 2;
+    const targetNearEdge = currentTrial.targetDistance - targetRadius;
+    const patternThreshold = targetRadius * 0.5;
+    const minimumProgress = currentTrial.targetDistance * 0.15;
+    const previousMaxProgress = currentTrial.maxProgress;
+    const progress = getTargetProgress();
+    currentTrial.maxProgress = Math.max(
+        currentTrial.maxProgress,
+        progress
+    );
 
+    // 1. 이동 중 멈췄다가 다시 움직인 경우
     if (
-        !currentTrial.firstCorrection
+        currentTrial.hasStartedMoving &&
+        currentTrial.lastMoveTime !== null
     ) {
-        currentTrial.minDistanceBeforeCorrection =
-            Math.min(
-                currentTrial.minDistanceBeforeCorrection,
-                distanceToTarget
-            );
-    }
-
-
-    const movementProjection =
-        moveX *
-        currentTrial.unitX +
-        moveY *
-        currentTrial.unitY;
-
-
-    let direction = 0;
-
-
-    if (movementProjection > 0.6) {
-        direction = 1;
-    }
-
-    if (movementProjection < -0.6) {
-        direction = -1;
-    }
-
-
-    if (
-        direction !== 0 &&
-        currentTrial.lastDirection !== 0 &&
-        direction !==
-        currentTrial.lastDirection
-    ) {
-
-        currentTrial.correctionCount++;
-
+        const pauseTime = now - currentTrial.lastMoveTime;
 
         if (
-            !currentTrial.firstCorrection
+            pauseTime >= 120 &&
+            Math.abs(movementProjection) > 1.2 &&
+            previousMaxProgress >= minimumProgress &&
+            previousMaxProgress < targetNearEdge &&
+            now - currentTrial.lastCorrectionTime >= 100
         ) {
-            currentTrial.firstCorrection =
-                true;
-
-
-            currentTrial.firstApproachDistance =
-                currentTrial
-                    .minDistanceBeforeCorrection;
-
-
-            const progress =
-                getTargetProgress();
-
-
-            const targetRadius =
-                target.offsetWidth / 2;
-
-
-            if (
-                progress <
-                currentTrial.targetDistance -
-                targetRadius
-            ) {
-
-                currentTrial.undershoot =
-                    Math.max(
-                        0,
-
-                        currentTrial.targetDistance -
-                        progress -
-                        targetRadius
-                    );
+            currentTrial.correctionCount++;
+            currentTrial.lastCorrectionTime = now;
+            const underAmount = targetNearEdge - previousMaxProgress;
+            currentTrial.undershoot = Math.max(
+                currentTrial.undershoot, underAmount
+            );
+            if (currentTrial.firstPattern === null && underAmount >= patternThreshold) {
+                currentTrial.firstPattern = "UNDER";
+            }
+            if (!currentTrial.firstCorrection) {
+                currentTrial.firstCorrection = true;
+                currentTrial.firstApproachDistance = distanceToTarget;
             }
         }
     }
 
-
-    if (direction !== 0) {
-        currentTrial.lastDirection =
-            direction;
+    if (Math.abs(movementProjection) > 1.2) {
+        currentTrial.hasStartedMoving = true;
+        currentTrial.lastMoveTime = now;
     }
 
+    // 2. 진행 방향 판정
+    let direction = 0;
 
-    const progress =
-        getTargetProgress();
+    if (movementProjection > 1.2) {
+        direction = 1;
+    }
+    if (movementProjection < -1.2) {
+        direction = -1;
+    }
 
-
-    if (
-        progress >
-        currentTrial.targetDistance
+    // 3. 실제 방향 전환
+    if (direction !== 0 &&
+        currentTrial.lastDirection !== 0 && 
+        direction !== currentTrial.lastDirection &&
+        currentTrial.maxProgress >= minimumProgress &&
+        now - currentTrial.lastCorrectionTime >= 100
     ) {
+        currentTrial.correctionCount++;
+        currentTrial.lastCorrectionTime = now;
+        if (!currentTrial.firstCorrection) {
+            currentTrial.firstCorrection = true;
+            currentTrial.firstApproachDistance = distanceToTarget;
+            if (progress < targetNearEdge) {
+                const underAmount = targetNearEdge - progress;
+                currentTrial.undershoot = Math.max(
+                    currentTrial.undershoot, underAmount
+                );
+                if (currentTrial.firstPattern === null && underAmount >= patternThreshold) {
+                    currentTrial.firstPattern = "UNDER";
+                }
+            }
+        }
+        
+    }
 
-        const overshoot =
-            progress -
-            currentTrial.targetDistance;
+    if (direction !== 0) {
+        currentTrial.lastDirection = direction;
+    }
 
-
-        currentTrial.overshoot =
-            Math.max(
-                currentTrial.overshoot,
-                overshoot
-            );
+    // 4. 오버슈트
+    const targetFarEdge = currentTrial.targetDistance + targetRadius;
+    if (progress > targetFarEdge) {
+        const overshoot = progress - targetFarEdge;
+        currentTrial.overshoot = Math.max(
+            currentTrial.overshoot, overshoot
+        );
+        if (currentTrial.firstPattern === null && overshoot >= patternThreshold) {
+            currentTrial.firstPattern = "OVER";
+        }
     }
 }
 
@@ -564,56 +591,58 @@ document.addEventListener(
             return;
         }
 
-        completeTrial();
+        if (isHoldingTarget) {
+            return;
+        }
+        isHoldingTarget = true;
+        targetHitTime = performance.now();
+        target.classList.add("holding");
+        statusText.textContent = "HOLD";
+        targetHoldTimer = setTimeout(() => {
+            if (!isTesting || !currentTrial || !isHoldingTarget) {
+                return;
+            }
+            isHoldingTarget = false;
+            targetHoldTimer = null;
+            target.classList.remove("holding");
+            completeTrial(targetHitTime);
+        }, TARGET_HOLD_TIME);
     }
 );
 
 // 한 회차 완료
-function completeTrial() {
-
-    const endTime =
-        performance.now();
-
-
+function completeTrial(endTime = performance.now()) {
     const elapsedTime =
         endTime -
         trialStartTime;
-
 
     const targetRadius =
         target.offsetWidth / 2;
 
 
-    if (
-        currentTrial
-            .firstApproachDistance ===
-        null
-    ) {
-
-        currentTrial.firstApproachDistance =
-            currentTrial
-                .minDistanceBeforeCorrection;
+    if (currentTrial.firstApproachDistance === null) {
+        currentTrial.firstApproachDistance = Math.hypot(
+            crosshairX - targetX,
+            crosshairY - targetY
+        );
     }
 
 
-    const firstAccuracyValue =
-        calculateFirstAccuracy(
-            currentTrial
-                .firstApproachDistance,
+    const firstAccuracyValue = calculateFirstAccuracy(
+        currentTrial.firstApproachDistance, targetRadius
+    );
 
-            currentTrial
-                .targetDistance,
-
-            targetRadius
-        );
-
+    const pattern = currentTrial.firstPattern === null
+        ? "CLEAN"
+        : currentTrial.firstPattern;
 
     testResults.push({
         time: elapsedTime,
         overshoot: currentTrial.overshoot,
         undershoot: currentTrial.undershoot,
         correctionCount: currentTrial.correctionCount,
-        firstAccuracy: firstAccuracyValue
+        firstAccuracy: firstAccuracyValue,
+        pattern: pattern
     });
 
     currentTrial = null;
@@ -643,41 +672,16 @@ function completeTrial() {
 }
 
 // 첫 접근 정확도
-function calculateFirstAccuracy(
-    distance,
-    totalDistance,
-    targetRadius
-) {
-
-    const usableDistance =
-        Math.max(
-            1,
-            totalDistance -
-            targetRadius
-        );
-
-
-    const errorDistance =
-        Math.max(
-            0,
-            distance -
-            targetRadius
-        );
-
-
-    const accuracy =
-        (
-            1 -
-            errorDistance /
-            usableDistance
-        ) *
-        100;
-
-
+function calculateFirstAccuracy(distance, targetRadius) {
+    const errorDistance = Math.max(
+        0, distance - targetRadius
+    );
+    const toleranceDistance = targetRadius * 4;
+    const accuracy = (
+        1 - errorDistance / toleranceDistance
+    ) * 100;
     return clamp(
-        accuracy,
-        0,
-        100
+        accuracy, 0, 100
     );
 }
 
@@ -763,8 +767,37 @@ function analyzeResult() {
     }
 
 
-    const count =
-        testResults.length;
+    const count = testResults.length;
+    const underCount = testResults.filter(
+        result => result.pattern === "UNDER"
+    ).length;
+    const overCount = testResults.filter(
+        result => result.pattern === "OVER"
+    ).length;
+    const cleanCount = testResults.filter(
+        result => result.pattern === "CLEAN"
+    ).length;
+    const underResults = testResults.filter(
+        result => result.pattern === "UNDER"
+    );
+    const overResults = testResults.filter(
+        result => result.pattern === "OVER"
+    );
+    const avgUnderPattern = 
+        underCount > 0
+            ? underResults.reduce (
+                (sum, result) => sum + result.undershoot, 0
+            ) / underCount : 0;
+    const avgOverPattern = 
+        overCount > 0
+            ? overResults.reduce(
+                (sum, result) => sum + result.overshoot, 0
+            ) / overCount : 0;
+    console.log (
+        "GENERAL PATTERN COUNT ===>", {
+            underCount, overCount, cleanCount
+        }
+    );
 
 
     const avgTime =
@@ -840,7 +873,12 @@ function analyzeResult() {
         avgUndershoot,
         avgCorrection,
         avgFirstAccuracy,
-        avgTime
+        avgTime,
+        underCount,
+        overCount,
+        cleanCount,
+        avgUnderPattern,
+        avgOverPattern
     );
 }
 
@@ -850,132 +888,149 @@ function createRecommendation(
     avgUndershoot,
     avgCorrection,
     avgFirstAccuracy,
-    avgTime
+    avgTime,
+    underCount,
+    overCount,
+    cleanCount,
+    avgUnderPattern,
+    avgOverPattern
 ) {
-
     const currentGeneral =
-        Number(
-            generalInput.value
-        );
+        Number(generalInput.value);
 
-
-    const difference =
-        avgUndershoot -
-        avgOvershoot;
-
+    // 양수 = UNDER가 많음 = 감도가 낮은 경향
+    // 음수 = OVER가 많음 = 감도가 높은 경향
+    const patternDifference = underCount - overCount;
+    const patternGap = Math.abs(patternDifference);
+    const stableControl =
+        avgCorrection <= 0.5 &&
+        avgFirstAccuracy >= 90 &&
+        avgTime <= 0.9;
 
     let change = 0;
+    let state = "현재 감도 적정";
+    let feedbackMessage = "";
 
-    let state = "적정";
-
-
-    if (difference > 6) {
-
-        change =
-            clamp(
-                Math.round(
-                    difference / 10
-                ),
-                1,
-                5
-            );
-
-        state =
-            "감도가 낮은 경향";
-    }
-
-
-    else if (difference < -6) {
-
-        change =
-            -clamp(
-                Math.round(
-                    Math.abs(
-                        difference
-                    ) /
-                    10
-                ),
-                1,
-                5
-            );
-
-        state =
-            "감도가 높은 경향";
-    }
-
-
-    else {
-
+    // UNDER와 OVER 횟수가 거의 같은 경우
+    if (patternGap <= 1) {
         change = 0;
+        if (
+            avgCorrection >= 1 ||
+            avgFirstAccuracy < 70
+        ) {
+            state = "추가 테스트 필요";
+            feedbackMessage =
+                `UNDER ${underCount}회, OVER ${overCount}회로 두 패턴의 차이가 크지 않습니다. ` +
+                `조준 안정성도 낮게 측정되어 현재 감도 ${currentGeneral}을 유지한 상태로 한 번 더 테스트하는 것을 추천합니다.`;
+        } else {
+            state = "현재 감도 적정";
+            feedbackMessage =
+                `UNDER ${underCount}회, OVER ${overCount}회, CLEAN ${cleanCount}회로 특정 방향의 편향이 크지 않습니다. ` +
+                `현재 일반 상태 감도 ${currentGeneral}을 유지하는 것을 추천합니다.`;
+        }
+    } else {
+        let changeAmount = 0;
 
-        state =
-            "현재 감도 적정";
+        // 1순위: UNDER / OVER 발생 횟수 차이
+        if (patternGap <= 3) {
+            changeAmount = 1;
+        } else if (patternGap <= 5) {
+            changeAmount = 2;
+        } else if (patternGap <= 7) {
+            changeAmount = 3;
+        } else {
+            changeAmount = 4;
+        }
+
+        // 2순위: 우세한 패턴이 얼마나 크게 발생했는지
+        const dominantError =
+            patternDifference > 0
+                ? avgUnderPattern
+                : avgOverPattern;
+
+        if (dominantError >= 80) {
+            changeAmount++;
+        }
+
+        // 조작 자체가 매우 안정적이면 과도한 변경 방지
+        if (
+            stableControl ||
+            cleanCount >= 8
+        ) {
+            changeAmount--;
+        }
+
+        changeAmount =
+            clamp(
+                changeAmount,
+                0,
+                5
+            );
+
+        if (changeAmount === 0) {
+            change = 0;
+            state = "현재 감도 적정";
+            feedbackMessage =
+                `약간의 방향 차이는 있지만 전체 조준 결과가 안정적입니다. 현재 일반 상태 감도 ${currentGeneral}을 유지하는 것을 추천합니다.`;
+        }  else if (patternDifference > 0) {
+
+            // UNDER가 더 많음
+            change = changeAmount;
+            state = "감도가 낮은 경향";
+            feedbackMessage =
+                `UNDER ${underCount}회, OVER ${overCount}회, CLEAN ${cleanCount}회로 목표물에 부족하게 도달하는 패턴이 더 많이 나타났습니다. ` +
+                `현재 일반 상태 감도 ${currentGeneral}에서 ${currentGeneral + change} 정도로 높여 테스트해보는 것을 추천합니다.`;
+        } else {
+            // OVER가 더 많음
+            change = -changeAmount;
+            state = "감도가 높은 경향";
+            feedbackMessage =
+                `UNDER ${underCount}회, OVER ${overCount}회, CLEAN ${cleanCount}회로 목표물을 지나치는 패턴이 더 많이 나타났습니다. ` +
+                `현재 일반 상태 감도 ${currentGeneral}에서 ${currentGeneral + change} 정도로 낮춰 테스트해보는 것을 추천합니다.`;
+        }
     }
-
 
     latestRecommendGeneral =
         clamp(
-            currentGeneral +
-            change,
+            currentGeneral + change,
             0,
             100
         );
 
-
-    sensitivityState.textContent =
-        state;
-
-
-    recommendGeneral.textContent =
-        latestRecommendGeneral;
-
+    sensitivityState.textContent = state;
+    recommendGeneral.textContent = latestRecommendGeneral;
 
     if (change > 0) {
-
         recommendState.textContent =
             `현재보다 +${change} 추천`;
-
-
-        feedback.textContent =
-            `목표물에 도달하기 전 방향을 수정하는 경향이 나타났습니다. 현재 일반 상태 감도 ${currentGeneral}에서 ${latestRecommendGeneral} 정도로 높여 테스트해보는 것을 추천합니다.`;
-    }
-
-
-    else if (change < 0) {
-
+    } else if (change < 0) {
         recommendState.textContent =
             `현재보다 ${change} 추천`;
-
-
-        feedback.textContent =
-            `목표물을 지나친 뒤 다시 보정하는 경향이 나타났습니다. 현재 일반 상태 감도 ${currentGeneral}에서 ${latestRecommendGeneral} 정도로 낮춰 테스트해보는 것을 추천합니다.`;
-    }
-
-
-    else {
-
+    } else {
         recommendState.textContent =
-            "현재 감도 유지 추천";
-
-
-        feedback.textContent =
-            `현재 일반 상태 감도 ${currentGeneral}에서 오버슈트와 언더슈트의 차이가 크지 않습니다. 현재 감도를 유지하면서 추가 테스트를 진행하는 것을 추천합니다.`;
+            state === "추가 테스트 필요"
+                ? "현재값 유지 후 재테스트"
+                : "현재 감도 유지 추천";
     }
 
-
-    applyRecommendBtn.disabled =
-        false;
-
-
+    feedback.textContent = feedbackMessage;
+    applyRecommendBtn.disabled = false;
     console.log(
         "GENERAL TEST RESULT ===>",
         {
+            underCount,
+            overCount,
+            cleanCount,
+            avgUnderPattern,
+            avgOverPattern,
             avgOvershoot,
             avgUndershoot,
             avgCorrection,
             avgFirstAccuracy,
             avgTime,
+            patternDifference,
             currentGeneral,
+            change,
             recommended:
                 latestRecommendGeneral
         }
@@ -983,57 +1038,26 @@ function createRecommendation(
 }
 
 // 추천값 적용
-applyRecommendBtn.addEventListener(
-    "click",
-    () => {
-
-        if (
-            latestRecommendGeneral ===
-            null
-        ) {
+applyRecommendBtn.addEventListener("click", () => {
+        if (latestRecommendGeneral === null) {
             return;
         }
 
-
-        generalInput.value =
-            latestRecommendGeneral;
-
-
-        recommendState.textContent =
-            "추천값이 적용되었습니다.";
+        generalInput.value = latestRecommendGeneral;
+        recommendState.textContent = "추천값이 적용되었습니다.";
     }
 );
 
 // 결과 초기화
 function resetResultUI() {
-
-    averageTime.textContent =
-        "0.00초";
-
-    averageOvershoot.textContent =
-        "0 px";
-
-    averageUndershoot.textContent =
-        "0 px";
-
-    averageCorrection.textContent =
-        "0회";
-
-    firstAccuracy.textContent =
-        "0%";
-
-    sensitivityState.textContent =
-        "-";
-
-    recommendGeneral.textContent =
-        "-";
-
-    recommendState.textContent =
-        "테스트를 진행해주세요.";
-
-    feedback.textContent =
-        "테스트를 진행하면 마우스 이동 패턴을 분석하여 일반 상태 감도를 추천합니다.";
-
-    applyRecommendBtn.disabled =
-        true;
+    averageTime.textContent = "0.00초";
+    averageOvershoot.textContent = "0 px";
+    averageUndershoot.textContent = "0 px";
+    averageCorrection.textContent = "0회";
+    firstAccuracy.textContent = "0%";
+    sensitivityState.textContent = "-";
+    recommendGeneral.textContent = "-";
+    recommendState.textContent = "테스트를 진행해주세요.";
+    feedback.textContent = "테스트를 진행하면 마우스 이동 패턴을 분석하여 일반 상태 감도를 추천합니다.";
+    applyRecommendBtn.disabled = true;
 }
