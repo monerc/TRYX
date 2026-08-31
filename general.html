@@ -89,6 +89,15 @@
                         <span>감도 상태</span>
                         <strong id="sensitivityState">-</strong>
                     </div>
+                    <div>
+                        <span>ONE FLICK 성공</span>
+                        <strong id="oneFlickSuccessCount">0 / 15</strong>
+                    </div>
+                </div>
+                <div class="general_comparison">
+                    <h3>이전 테스트 대비</h3>
+                    <p id="generalComparisonSummary">이전 테스트 기록이 없습니다.</p>
+                    <div id="generalComparisonGrid" class="general_comparison_grid"></div>
                 </div>
             </section>
             <section class="recommend">
@@ -102,6 +111,26 @@
                     테스트를 진행하면 마우스 이동 패턴을 분석하여 일반 상태 감도를 추천합니다.
                 </p>
                 <button id="applyRecommendBtn" disabled>추천값 적용</button>
+                <div class="sensitivity_history">
+                    <h3>현재 최적 후보</h3>
+                    <div class="best_candidate">
+                        <span>GENERAL</span>
+                        <strong id="bestSensitivity">-</strong>
+                        <small id="bestSensitivityState">테스트 기록이 없습니다.</small>
+                    </div>
+                    <h3>테스트 기록</h3>
+                    <div id="sensitivityHistoryList" class="history_list">
+                        <p class="history_empty">테스트를 완료하면 감도별 평균 결과가 표시됩니다.</p>
+                    </div>
+                </div>
+            </section>
+            <section class="recent_history">
+                <h2>최근 테스트 기록</h2>
+                <p class="recent_history_note">최근 5회의 정상 테스트 결과를 저장합니다.</p>
+                <button id="clearGeneralHistoryBtn">테스트 기록 전체 삭제</button>
+                <div id="generalHistoryList">
+                    <p class="recent_history_empty">아직 저장된 테스트 기록이 없습니다.</p>
+                </div>
             </section>
         </main>
     </div>

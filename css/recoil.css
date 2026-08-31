@@ -417,6 +417,89 @@ section h2 {
     margin-top: 15px;
 }
 
+.recoil_candidate_history {
+    margin-top: 30px;
+    padding-top: 30px;
+    border-top: 1px solid #333;
+}
+
+.recoil_candidate_history h3 {
+    margin-bottom: 15px;
+    font-size: 16px;
+}
+
+.recoil_best_candidate {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+}
+
+.recoil_best_candidate div {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px;
+    background: #111;
+}
+
+.recoil_best_candidate span {
+    color: #777;
+    font-size: 13px;
+}
+
+.recoil_best_candidate strong {
+    color: #f2a900;
+    font-size: 28px;
+}
+
+.recoil_candidate_state {
+    padding: 15px 20px;
+    margin: 10px 0 25px;
+    background: #111;
+    color: #aaa;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-line;
+}
+
+.recoil_candidate_list {
+    display: grid;
+    gap: 10px;
+}
+
+.recoil_candidate_item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+    padding: 15px 20px;
+    background: #111;
+}
+
+.recoil_candidate_item strong {
+    min-width: 110px;
+    color: #f2a900;
+    font-size: 18px;
+}
+
+.recoil_candidate_item span {
+    flex: 1;
+    color: #aaa;
+    line-height: 1.7;
+    white-space: pre-line;
+}
+
+.recoil_candidate_item small,
+.recoil_candidate_empty {
+    color: #777;
+    font-size: 12px;
+}
+
+.recoil_candidate_empty {
+    padding: 15px 20px;
+    background: #111;
+}
+
 /* 전체화면 테스트 */
 .test:fullscreen {
     width: 100%;
@@ -683,6 +766,10 @@ section h2 {
     }
 
     .history_compare_grid {
+        grid-template-columns: 1fr;
+    }
+
+    .recoil_best_candidate {
         grid-template-columns: 1fr;
     }
 }

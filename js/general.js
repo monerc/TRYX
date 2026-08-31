@@ -17,14 +17,30 @@ const averageUndershoot = document.querySelector("#averageUndershoot");
 const averageCorrection = document.querySelector("#averageCorrection");
 const firstAccuracy = document.querySelector("#firstAccuracy");
 const sensitivityState = document.querySelector("#sensitivityState");
+const oneFlickSuccessCountText = document.querySelector("#oneFlickSuccessCount");
 const recommendGeneral = document.querySelector("#recommendGeneral");
 const recommendState = document.querySelector("#recommendState");
 const feedback = document.querySelector("#feedback");
+const bestSensitivity = document.querySelector("#bestSensitivity");
+const bestSensitivityState = document.querySelector("#bestSensitivityState");
+const sensitivityHistoryList = document.querySelector("#sensitivityHistoryList");
+const generalComparisonSummary = document.querySelector("#generalComparisonSummary");
+const generalComparisonGrid = document.querySelector("#generalComparisonGrid");
+const generalHistoryList = document.querySelector("#generalHistoryList");
+const clearGeneralHistoryBtn = document.querySelector("#clearGeneralHistoryBtn");
 
 // 기본 설정
 const TOTAL_TESTS = 15;
 const BASE_GENERAL_SENSITIVITY = 40;
 const TARGET_HOLD_TIME = 1000;
+const GENERAL_SETTINGS_STORAGE_KEY = "tryxGeneralSettings";
+const GENERAL_HISTORY_STORAGE_KEY = "tryxGeneralTestHistory";
+const GENERAL_MAX_HISTORY_COUNT = 5;
+
+document.documentElement.style.setProperty(
+    "--target-hold-time",
+    `${TARGET_HOLD_TIME}ms`
+);
 
 let currentTest = 0;
 let isTesting = false;
@@ -41,7 +57,11 @@ let trialStartTime = 0;
 let timerAnimation = null;
 let currentTrial = null;
 let testResults = [];
+let sensitivityHistory = [];
 let latestRecommendGeneral = null;
+let latestGeneralTestSummary = null;
+let pendingRecommendationTest = null;
+let isRecommendationRetest = false;
 let isHoldingTarget = false;
 let targetHoldTimer = null;
 let targetHitTime = null;
@@ -244,6 +264,18 @@ startBtn.addEventListener("click", async () => {
         return;
     }
 
+    isRecommendationRetest =
+        pendingRecommendationTest !== null &&
+        pendingRecommendationTest.dpi === dpi &&
+        pendingRecommendationTest.recommendedGeneral === general;
+
+    if (
+        pendingRecommendationTest &&
+        !isRecommendationRetest
+    ) {
+        pendingRecommendationTest = null;
+    }
+
     currentGeneralSensitivity = general;
 
     currentTest = 0;
@@ -329,6 +361,7 @@ function startTrial() {
         lastCorrectionTime: 0,
         firstCorrection: false,
         firstPattern: null,
+        hasMissed: false,
         minDistanceBeforeCorrection: targetDistance,
         firstApproachDistance: null
     };
@@ -387,8 +420,8 @@ document.addEventListener(
         updateCrosshair();
 
         analyzeMouseMovement(
-            rawMoveX,
-            rawMoveY
+            moveX,
+            moveY
         );
     }
 );
@@ -576,6 +609,7 @@ document.addEventListener(
             distance >
             targetRadius
         ) {
+            currentTrial.hasMissed = true;
             statusText.textContent =
                 "MISS";
 
@@ -589,6 +623,10 @@ document.addEventListener(
             }, 150);
 
             return;
+        }
+
+        if (currentTrial.firstApproachDistance === null) {
+            currentTrial.firstApproachDistance = distance;
         }
 
         if (isHoldingTarget) {
@@ -635,6 +673,10 @@ function completeTrial(endTime = performance.now()) {
     const pattern = currentTrial.firstPattern === null
         ? "CLEAN"
         : currentTrial.firstPattern;
+    const oneFlickSuccess =
+        pattern === "CLEAN" &&
+        currentTrial.correctionCount === 0 &&
+        currentTrial.hasMissed === false;
 
     testResults.push({
         time: elapsedTime,
@@ -642,7 +684,9 @@ function completeTrial(endTime = performance.now()) {
         undershoot: currentTrial.undershoot,
         correctionCount: currentTrial.correctionCount,
         firstAccuracy: firstAccuracyValue,
-        pattern: pattern
+        pattern: pattern,
+        hasMissed: currentTrial.hasMissed,
+        oneFlickSuccess: oneFlickSuccess
     });
 
     currentTrial = null;
@@ -777,6 +821,17 @@ function analyzeResult() {
     const cleanCount = testResults.filter(
         result => result.pattern === "CLEAN"
     ).length;
+    const oneFlickSuccessCount = testResults.filter(
+        result => result.oneFlickSuccess
+    ).length;
+    const oneFlickSuccessRate =
+        oneFlickSuccessCount / count * 100;
+    const correctionOccurredCount = testResults.filter(
+        result => result.correctionCount >= 1
+    ).length;
+    const missedTrialCount = testResults.filter(
+        result => result.hasMissed
+    ).length;
     const underResults = testResults.filter(
         result => result.pattern === "UNDER"
     );
@@ -795,7 +850,13 @@ function analyzeResult() {
             ) / overCount : 0;
     console.log (
         "GENERAL PATTERN COUNT ===>", {
-            underCount, overCount, cleanCount
+            underCount,
+            overCount,
+            cleanCount,
+            oneFlickSuccessCount,
+            oneFlickSuccessRate,
+            correctionOccurredCount,
+            missedTrialCount
         }
     );
 
@@ -867,6 +928,21 @@ function analyzeResult() {
     firstAccuracy.textContent =
         `${avgFirstAccuracy.toFixed(1)}%`;
 
+    oneFlickSuccessCountText.textContent =
+        `${oneFlickSuccessCount} / ${count}`;
+
+    recordSensitivitySession({
+        generalSensitivity: currentGeneralSensitivity,
+        oneFlickSuccessCount,
+        oneFlickSuccessRate,
+        underCount,
+        overCount,
+        correctionOccurredCount,
+        missedTrialCount,
+        avgFirstAccuracy,
+        avgTime
+    });
+
 
     createRecommendation(
         avgOvershoot,
@@ -877,9 +953,462 @@ function analyzeResult() {
         underCount,
         overCount,
         cleanCount,
+        oneFlickSuccessCount,
+        oneFlickSuccessRate,
         avgUnderPattern,
         avgOverPattern
     );
+
+    const previousRecord = getGeneralTestHistory()[0] || null;
+    const currentRecord = {
+        timestamp: Date.now(),
+        dpi: Number(dpiInput.value),
+        generalSensitivity: currentGeneralSensitivity,
+        recommendedGeneral: latestRecommendGeneral,
+        oneFlickSuccessCount,
+        oneFlickSuccessRate,
+        underCount,
+        overCount,
+        cleanCount,
+        correctionOccurredCount,
+        missedTrialCount,
+        avgFirstAccuracy,
+        avgTime,
+        avgOvershoot,
+        avgUndershoot,
+        avgCorrection
+    };
+
+    const comparisonRecord =
+        isRecommendationRetest && pendingRecommendationTest
+            ? pendingRecommendationTest.baseline
+            : previousRecord;
+
+    renderGeneralComparison(
+        currentRecord,
+        comparisonRecord,
+        isRecommendationRetest
+    );
+    saveGeneralTestHistory(currentRecord);
+    latestGeneralTestSummary = currentRecord;
+
+    if (isRecommendationRetest) {
+        pendingRecommendationTest = null;
+        isRecommendationRetest = false;
+    }
+}
+
+// 감도별 테스트 기록
+function recordSensitivitySession(sessionResult) {
+    sensitivityHistory.push(sessionResult);
+    renderSensitivityHistory();
+}
+
+function getSensitivitySummaries() {
+    const groupedHistory = new Map();
+
+    sensitivityHistory.forEach(result => {
+        if (!groupedHistory.has(result.generalSensitivity)) {
+            groupedHistory.set(result.generalSensitivity, []);
+        }
+
+        groupedHistory.get(result.generalSensitivity).push(result);
+    });
+
+    return Array.from(groupedHistory.entries()).map(
+        ([generalSensitivity, results]) => {
+            const average = key =>
+                results.reduce(
+                    (sum, result) => sum + result[key],
+                    0
+                ) / results.length;
+
+            return {
+                generalSensitivity,
+                testCount: results.length,
+                avgOneFlickSuccessCount: average("oneFlickSuccessCount"),
+                avgOneFlickSuccessRate: average("oneFlickSuccessRate"),
+                avgUnderCount: average("underCount"),
+                avgOverCount: average("overCount"),
+                avgCorrectionOccurredCount: average("correctionOccurredCount"),
+                avgMissedTrialCount: average("missedTrialCount"),
+                avgFirstAccuracy: average("avgFirstAccuracy"),
+                avgTime: average("avgTime")
+            };
+        }
+    );
+}
+
+function getBestSensitivityCandidate(summaries) {
+    if (summaries.length === 0) {
+        return null;
+    }
+
+    const highestSuccessRate = Math.max(
+        ...summaries.map(summary => summary.avgOneFlickSuccessRate)
+    );
+
+    const closeCandidates = summaries.filter(
+        summary =>
+            highestSuccessRate - summary.avgOneFlickSuccessRate <= 5
+    );
+
+    closeCandidates.sort((a, b) => {
+        const balanceA = Math.abs(a.avgUnderCount - a.avgOverCount);
+        const balanceB = Math.abs(b.avgUnderCount - b.avgOverCount);
+
+        return (
+            balanceA - balanceB ||
+            a.avgCorrectionOccurredCount - b.avgCorrectionOccurredCount ||
+            a.avgMissedTrialCount - b.avgMissedTrialCount ||
+            b.avgFirstAccuracy - a.avgFirstAccuracy ||
+            b.avgOneFlickSuccessRate - a.avgOneFlickSuccessRate
+        );
+    });
+
+    return closeCandidates[0];
+}
+
+function renderSensitivityHistory() {
+    const summaries = getSensitivitySummaries();
+    const bestCandidate = getBestSensitivityCandidate(summaries);
+
+    if (!bestCandidate) {
+        return;
+    }
+
+    bestSensitivity.textContent = bestCandidate.generalSensitivity;
+    bestSensitivityState.textContent =
+        `평균 ONE FLICK ${bestCandidate.avgOneFlickSuccessRate.toFixed(1)}% · ${bestCandidate.testCount}회 테스트`;
+
+    sensitivityHistoryList.textContent = "";
+
+    summaries
+        .sort((a, b) => a.generalSensitivity - b.generalSensitivity)
+        .forEach(summary => {
+            const historyItem = document.createElement("div");
+            const sensitivityText = document.createElement("strong");
+            const resultText = document.createElement("span");
+            const testCountText = document.createElement("small");
+
+            historyItem.className = "history_item";
+            sensitivityText.textContent = summary.generalSensitivity;
+            resultText.textContent =
+                `ONE FLICK ${summary.avgOneFlickSuccessRate.toFixed(1)}%`;
+            testCountText.textContent = `${summary.testCount}회 평균`;
+
+            historyItem.append(
+                sensitivityText,
+                resultText,
+                testCountText
+            );
+            sensitivityHistoryList.append(historyItem);
+        });
+}
+
+// General 사용자 설정
+function saveGeneralSettings() {
+    const settings = {
+        dpi: Number(dpiInput.value),
+        general: Number(generalInput.value)
+    };
+
+    localStorage.setItem(
+        GENERAL_SETTINGS_STORAGE_KEY,
+        JSON.stringify(settings)
+    );
+}
+
+function loadGeneralSettings() {
+    const savedSettings = localStorage.getItem(
+        GENERAL_SETTINGS_STORAGE_KEY
+    );
+
+    if (!savedSettings) {
+        return;
+    }
+
+    try {
+        const settings = JSON.parse(savedSettings);
+
+        if (Number.isFinite(settings.dpi)) {
+            dpiInput.value = settings.dpi;
+        }
+
+        if (Number.isFinite(settings.general)) {
+            generalInput.value = settings.general;
+        }
+    } catch (error) {
+        console.error("General 설정 불러오기 실패:", error);
+    }
+}
+
+// 최근 General 테스트 기록
+function getGeneralTestHistory() {
+    const savedHistory = localStorage.getItem(
+        GENERAL_HISTORY_STORAGE_KEY
+    );
+
+    if (!savedHistory) {
+        return [];
+    }
+
+    try {
+        const history = JSON.parse(savedHistory);
+        return Array.isArray(history) ? history : [];
+    } catch (error) {
+        console.error("General 테스트 기록 불러오기 실패:", error);
+        return [];
+    }
+}
+
+function saveGeneralTestHistory(record) {
+    const history = getGeneralTestHistory();
+    history.unshift(record);
+
+    localStorage.setItem(
+        GENERAL_HISTORY_STORAGE_KEY,
+        JSON.stringify(
+            history.slice(0, GENERAL_MAX_HISTORY_COUNT)
+        )
+    );
+
+    renderGeneralTestHistory();
+}
+
+function createGeneralHistoryMetric(label, value) {
+    const metric = document.createElement("div");
+    const labelText = document.createElement("span");
+    const valueText = document.createElement("strong");
+
+    labelText.textContent = label;
+    valueText.textContent = value;
+    metric.append(labelText, valueText);
+
+    return metric;
+}
+
+function renderGeneralTestHistory() {
+    const history = getGeneralTestHistory();
+    generalHistoryList.textContent = "";
+
+    if (history.length === 0) {
+        const emptyMessage = document.createElement("p");
+        emptyMessage.className = "recent_history_empty";
+        emptyMessage.textContent =
+            "아직 저장된 테스트 기록이 없습니다.";
+        generalHistoryList.append(emptyMessage);
+        return;
+    }
+
+    history.forEach((record, index) => {
+        const historyItem = document.createElement("div");
+        const historyTop = document.createElement("div");
+        const title = document.createElement("strong");
+        const date = document.createElement("span");
+        const setting = document.createElement("p");
+        const metrics = document.createElement("div");
+        const pattern = document.createElement("p");
+        const recommendation = document.createElement("p");
+
+        historyItem.className = "recent_history_item";
+        historyTop.className = "recent_history_top";
+        title.className = "recent_history_title";
+        date.className = "recent_history_date";
+        setting.className = "recent_history_setting";
+        metrics.className = "recent_history_metrics";
+        pattern.className = "recent_history_pattern";
+        recommendation.className = "recent_history_recommend";
+
+        title.textContent =
+            `#${history.length - index} GENERAL ${record.generalSensitivity}`;
+        date.textContent = new Date(record.timestamp).toLocaleString("ko-KR");
+        setting.textContent =
+            `DPI ${record.dpi} · 일반 감도 ${record.generalSensitivity}`;
+
+        metrics.append(
+            createGeneralHistoryMetric(
+                "ONE FLICK",
+                `${record.oneFlickSuccessRate.toFixed(1)}%`
+            ),
+            createGeneralHistoryMetric(
+                "첫 접근 정확도",
+                `${record.avgFirstAccuracy.toFixed(1)}%`
+            ),
+            createGeneralHistoryMetric(
+                "평균 수정 횟수",
+                `${record.avgCorrection.toFixed(1)}회`
+            ),
+            createGeneralHistoryMetric(
+                "MISS",
+                `${record.missedTrialCount}회`
+            )
+        );
+
+        pattern.textContent =
+            `UNDER ${record.underCount} / OVER ${record.overCount} / CLEAN ${record.cleanCount}`;
+        recommendation.textContent =
+            `추천: GENERAL ${record.recommendedGeneral}`;
+
+        historyTop.append(title, date);
+        historyItem.append(
+            historyTop,
+            setting,
+            metrics,
+            pattern,
+            recommendation
+        );
+        generalHistoryList.append(historyItem);
+    });
+}
+
+// 이전 테스트 및 추천값 재테스트 비교
+function getGeneralMetricComparison(
+    previousValue,
+    currentValue,
+    threshold,
+    higherIsBetter
+) {
+    const improvement = higherIsBetter
+        ? currentValue - previousValue
+        : previousValue - currentValue;
+
+    if (improvement >= threshold) {
+        return { score: 1, text: "▲ 개선", className: "improved" };
+    }
+
+    if (improvement <= -threshold) {
+        return { score: -1, text: "▼ 감소", className: "worse" };
+    }
+
+    return { score: 0, text: "– 동일", className: "same" };
+}
+
+function createGeneralComparisonItem(
+    label,
+    previousValue,
+    currentValue,
+    suffix,
+    comparison
+) {
+    const item = document.createElement("div");
+    const labelText = document.createElement("span");
+    const values = document.createElement("strong");
+    const status = document.createElement("small");
+
+    item.className = "general_comparison_item";
+    labelText.textContent = label;
+    values.textContent =
+        `${previousValue}${suffix} → ${currentValue}${suffix}`;
+    status.textContent = comparison.text;
+    status.className = comparison.className;
+    item.append(labelText, values, status);
+
+    return item;
+}
+
+function renderGeneralComparison(current, previous, recommendationRetest) {
+    generalComparisonGrid.textContent = "";
+
+    if (!previous) {
+        generalComparisonSummary.textContent =
+            "이전 테스트 기록이 없습니다.";
+        return;
+    }
+
+    if (current.dpi !== previous.dpi) {
+        generalComparisonSummary.textContent =
+            "이전 테스트와 DPI가 달라 직접 비교하지 않습니다.";
+        return;
+    }
+
+    const comparisons = [
+        {
+            label: "ONE FLICK",
+            previous: previous.oneFlickSuccessRate,
+            current: current.oneFlickSuccessRate,
+            suffix: "%",
+            digits: 1,
+            result: getGeneralMetricComparison(
+                previous.oneFlickSuccessRate,
+                current.oneFlickSuccessRate,
+                6,
+                true
+            )
+        },
+        {
+            label: "첫 접근 정확도",
+            previous: previous.avgFirstAccuracy,
+            current: current.avgFirstAccuracy,
+            suffix: "%",
+            digits: 1,
+            result: getGeneralMetricComparison(
+                previous.avgFirstAccuracy,
+                current.avgFirstAccuracy,
+                5,
+                true
+            )
+        },
+        {
+            label: "평균 수정 횟수",
+            previous: previous.avgCorrection,
+            current: current.avgCorrection,
+            suffix: "회",
+            digits: 1,
+            result: getGeneralMetricComparison(
+                previous.avgCorrection,
+                current.avgCorrection,
+                0.2,
+                false
+            )
+        },
+        {
+            label: "MISS",
+            previous: previous.missedTrialCount,
+            current: current.missedTrialCount,
+            suffix: "회",
+            digits: 0,
+            result: getGeneralMetricComparison(
+                previous.missedTrialCount,
+                current.missedTrialCount,
+                2,
+                false
+            )
+        }
+    ];
+
+    const verificationScore = comparisons.reduce(
+        (sum, item) => sum + item.result.score,
+        0
+    );
+
+    if (recommendationRetest) {
+        if (verificationScore >= 2) {
+            generalComparisonSummary.textContent =
+                "추천 감도 검증 성공 - 이전 감도보다 전체적인 ONE FLICK 성능이 향상되었습니다.";
+        } else if (verificationScore <= -2) {
+            generalComparisonSummary.textContent =
+                "추천 감도 검증 실패 - 이전 감도보다 전체적인 ONE FLICK 성능이 감소했습니다.";
+        } else {
+            generalComparisonSummary.textContent =
+                "추천 감도 검증 보류 - 이전 감도와 성능 차이가 크지 않아 추가 테스트가 필요합니다.";
+        }
+    } else {
+        generalComparisonSummary.textContent =
+            `이전 동일 DPI 테스트 GENERAL ${previous.generalSensitivity}과 현재 GENERAL ${current.generalSensitivity}을 비교합니다.`;
+    }
+
+    comparisons.forEach(item => {
+        generalComparisonGrid.append(
+            createGeneralComparisonItem(
+                item.label,
+                item.previous.toFixed(item.digits),
+                item.current.toFixed(item.digits),
+                item.suffix,
+                item.result
+            )
+        );
+    });
 }
 
 // 추천 감도 계산
@@ -892,6 +1421,8 @@ function createRecommendation(
     underCount,
     overCount,
     cleanCount,
+    oneFlickSuccessCount,
+    oneFlickSuccessRate,
     avgUnderPattern,
     avgOverPattern
 ) {
@@ -902,30 +1433,39 @@ function createRecommendation(
     // 음수 = OVER가 많음 = 감도가 높은 경향
     const patternDifference = underCount - overCount;
     const patternGap = Math.abs(patternDifference);
-    const stableControl =
-        avgCorrection <= 0.5 &&
-        avgFirstAccuracy >= 90 &&
-        avgTime <= 0.9;
+    const directionalCount = underCount + overCount;
+    const stableControl = oneFlickSuccessRate >= 80;
 
     let change = 0;
     let state = "현재 감도 적정";
     let feedbackMessage = "";
 
-    // UNDER와 OVER 횟수가 거의 같은 경우
-    if (patternGap <= 1) {
+    // UNDER / OVER 방향 표본이 부족한 경우
+    if (directionalCount < 5) {
         change = 0;
-        if (
-            avgCorrection >= 1 ||
-            avgFirstAccuracy < 70
-        ) {
+        if (!stableControl) {
             state = "추가 테스트 필요";
             feedbackMessage =
-                `UNDER ${underCount}회, OVER ${overCount}회로 두 패턴의 차이가 크지 않습니다. ` +
-                `조준 안정성도 낮게 측정되어 현재 감도 ${currentGeneral}을 유지한 상태로 한 번 더 테스트하는 것을 추천합니다.`;
+                `ONE FLICK 성공률은 ${oneFlickSuccessRate.toFixed(1)}%로 낮지만 UNDER/OVER 방향 데이터가 충분하지 않아 ` +
+                `현재 감도 ${currentGeneral}을 유지한 상태로 재테스트를 추천합니다.`;
         } else {
             state = "현재 감도 적정";
             feedbackMessage =
-                `UNDER ${underCount}회, OVER ${overCount}회, CLEAN ${cleanCount}회로 특정 방향의 편향이 크지 않습니다. ` +
+                `ONE FLICK 성공률은 ${oneFlickSuccessRate.toFixed(1)}%로 안정적이며 UNDER/OVER 방향 데이터가 충분하지 않아 ` +
+                `현재 일반 상태 감도 ${currentGeneral}을 유지하는 것을 추천합니다.`;
+        }
+    // UNDER와 OVER 횟수가 거의 같은 경우
+    } else if (patternGap <= 1) {
+        change = 0;
+        if (!stableControl) {
+            state = "추가 테스트 필요";
+            feedbackMessage =
+                `UNDER ${underCount}회, OVER ${overCount}회로 두 패턴의 차이가 크지 않습니다. ` +
+                `ONE FLICK 성공률이 ${oneFlickSuccessRate.toFixed(1)}%로 낮게 측정되어 현재 감도 ${currentGeneral}을 유지한 상태로 한 번 더 테스트하는 것을 추천합니다.`;
+        } else {
+            state = "현재 감도 적정";
+            feedbackMessage =
+                `ONE FLICK ${oneFlickSuccessCount}회 성공(${oneFlickSuccessRate.toFixed(1)}%)했고 UNDER ${underCount}회, OVER ${overCount}회로 특정 방향의 편향이 크지 않습니다. ` +
                 `현재 일반 상태 감도 ${currentGeneral}을 유지하는 것을 추천합니다.`;
         }
     } else {
@@ -953,10 +1493,7 @@ function createRecommendation(
         }
 
         // 조작 자체가 매우 안정적이면 과도한 변경 방지
-        if (
-            stableControl ||
-            cleanCount >= 8
-        ) {
+        if (stableControl) {
             changeAmount--;
         }
 
@@ -1021,6 +1558,8 @@ function createRecommendation(
             underCount,
             overCount,
             cleanCount,
+            oneFlickSuccessCount,
+            oneFlickSuccessRate,
             avgUnderPattern,
             avgOverPattern,
             avgOvershoot,
@@ -1043,8 +1582,29 @@ applyRecommendBtn.addEventListener("click", () => {
             return;
         }
 
+        if (
+            latestGeneralTestSummary &&
+            latestRecommendGeneral !==
+                latestGeneralTestSummary.generalSensitivity
+        ) {
+            pendingRecommendationTest = {
+                dpi: latestGeneralTestSummary.dpi,
+                beforeGeneral:
+                    latestGeneralTestSummary.generalSensitivity,
+                recommendedGeneral: latestRecommendGeneral,
+                baseline: { ...latestGeneralTestSummary }
+            };
+        } else {
+            pendingRecommendationTest = null;
+        }
+
         generalInput.value = latestRecommendGeneral;
         recommendState.textContent = "추천값이 적용되었습니다.";
+        saveGeneralSettings();
+        document.querySelector(".setting").scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
     }
 );
 
@@ -1056,8 +1616,28 @@ function resetResultUI() {
     averageCorrection.textContent = "0회";
     firstAccuracy.textContent = "0%";
     sensitivityState.textContent = "-";
+    oneFlickSuccessCountText.textContent = `0 / ${TOTAL_TESTS}`;
     recommendGeneral.textContent = "-";
     recommendState.textContent = "테스트를 진행해주세요.";
     feedback.textContent = "테스트를 진행하면 마우스 이동 패턴을 분석하여 일반 상태 감도를 추천합니다.";
     applyRecommendBtn.disabled = true;
 }
+
+dpiInput.addEventListener("input", saveGeneralSettings);
+generalInput.addEventListener("input", saveGeneralSettings);
+
+clearGeneralHistoryBtn.addEventListener("click", () => {
+    const confirmed = confirm(
+        "최근 General 테스트 기록을 모두 삭제하시겠습니까?"
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    localStorage.removeItem(GENERAL_HISTORY_STORAGE_KEY);
+    renderGeneralTestHistory();
+});
+
+loadGeneralSettings();
+renderGeneralTestHistory();

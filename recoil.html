@@ -237,6 +237,28 @@
             <button id="applyRecommendBtn" disabled>
                 추천값 적용
             </button>
+            <div class="recoil_candidate_history">
+                <h3>현재 최적 후보</h3>
+                <div class="recoil_best_candidate">
+                    <div>
+                        <span id="bestAimSensitivityLabel">ADS</span>
+                        <strong id="bestAimSensitivity">-</strong>
+                    </div>
+                    <div>
+                        <span>VERTICAL</span>
+                        <strong id="bestVerticalSensitivity">-</strong>
+                    </div>
+                </div>
+                <p id="bestRecoilCandidateState" class="recoil_candidate_state">
+                    현재 조건의 테스트 기록이 없습니다.
+                </p>
+                <h3>테스트 조합 기록</h3>
+                <div id="recoilCandidateList" class="recoil_candidate_list">
+                    <p class="recoil_candidate_empty">
+                        테스트를 완료하면 감도 조합별 평균 결과가 표시됩니다.
+                    </p>
+                </div>
+            </div>
         </section>
         <!-- 테스트 기록 -->
         <section class="history">

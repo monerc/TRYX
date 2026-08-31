@@ -59,6 +59,11 @@ const recommendADSState = document.querySelector("#recommendADSState");
 const recommendVerticalState = document.querySelector("#recommendVerticalState");
 
 const feedback = document.querySelector("#feedback");
+const bestAimSensitivityLabel = document.querySelector("#bestAimSensitivityLabel");
+const bestAimSensitivity = document.querySelector("#bestAimSensitivity");
+const bestVerticalSensitivity = document.querySelector("#bestVerticalSensitivity");
+const bestRecoilCandidateState = document.querySelector("#bestRecoilCandidateState");
+const recoilCandidateList = document.querySelector("#recoilCandidateList");
 
 let recommendScopeCard = null;
 let recommendScopeLabel = null;
@@ -382,6 +387,9 @@ let roundTracking = null;
 
 // 이전 테스트
 let previousTestSummary = null;
+
+// 현재 페이지의 반동 감도 후보 기록
+let recoilCandidateHistory = [];
 
 // 마지막 추천값
 let lastRecommendation = null;
@@ -1017,6 +1025,7 @@ clearHistoryBtn.addEventListener("click", () => {
 weaponInput.addEventListener("change", () => {
     updateWeaponInfo();
     updateAttachmentAvailability();
+    refreshRecoilCandidateView();
 });
 
 function updateWeaponInfo() {
@@ -1046,6 +1055,17 @@ updateAttachmentAvailability();
 sightInput.addEventListener("change", () => {
     updateScopeSensitivityUI();
     updateRecommendationScopeCard();
+    refreshRecoilCandidateView();
+});
+
+dpiInput.addEventListener("input", refreshRecoilCandidateView);
+
+[
+    muzzleInput,
+    gripInput,
+    stanceInput
+].forEach(input => {
+    input.addEventListener("change", refreshRecoilCandidateView);
 });
 
 function updateScopeSensitivityUI() {
@@ -1137,6 +1157,7 @@ function updateRecommendationScopeCard() {
 }
 
 updateRecommendationScopeCard();
+refreshRecoilCandidateView();
 
 // 전체화면
 async function enterFullscreenTest() {
@@ -2719,6 +2740,25 @@ function analyzeAverage() {
     const currentScope =
         testSensitivity.scope;
 
+    recordRecoilCandidate({
+        weapon: testWeaponSetting.weapon,
+        sight: testWeaponSetting.sight,
+        muzzle: testWeaponSetting.muzzle,
+        grip: testWeaponSetting.grip,
+        stance: testWeaponSetting.stance,
+        dpi: testSensitivity.dpi,
+        aimSensitivity: magnified
+            ? currentScope
+            : currentADS,
+        verticalSensitivity: Number(currentVertical.toFixed(2)),
+        centerRate: avgCenterRate,
+        averageDistance: avgDistance,
+        horizontalError: avgHorizontal,
+        verticalError: avgVertical,
+        outsideDistance: avgOutsideDistance,
+        returnTime: avgReturnTime
+    });
+
     let newGeneral =
         currentGeneral;
 
@@ -3367,6 +3407,191 @@ function analyzeAverage() {
         avgCenterRate >= 85
             ? "현재 감도 유지 또는 미세 조정 - " + message
             : "감도 조정 추천 - " + message;
+}
+
+// 현재 페이지의 반동 감도 후보 기록
+function recordRecoilCandidate(candidate) {
+    recoilCandidateHistory.push(candidate);
+    renderRecoilCandidates(candidate);
+}
+
+function isSameRecoilCondition(candidate, currentCandidate) {
+    return (
+        candidate.weapon === currentCandidate.weapon &&
+        candidate.sight === currentCandidate.sight &&
+        candidate.muzzle === currentCandidate.muzzle &&
+        candidate.grip === currentCandidate.grip &&
+        candidate.stance === currentCandidate.stance &&
+        candidate.dpi === currentCandidate.dpi
+    );
+}
+
+function getRecoilCandidateSummaries(currentCandidate) {
+    const groupedCandidates = new Map();
+
+    recoilCandidateHistory
+        .filter(candidate =>
+            isSameRecoilCondition(candidate, currentCandidate)
+        )
+        .forEach(candidate => {
+            const verticalSensitivity =
+                Number(candidate.verticalSensitivity.toFixed(2));
+            const combinationKey =
+                `${candidate.aimSensitivity}|${verticalSensitivity.toFixed(2)}`;
+
+            if (!groupedCandidates.has(combinationKey)) {
+                groupedCandidates.set(combinationKey, []);
+            }
+
+            groupedCandidates.get(combinationKey).push(candidate);
+        });
+
+    return Array.from(groupedCandidates.values()).map(candidates => {
+        const average = key =>
+            candidates.reduce(
+                (sum, candidate) => sum + candidate[key],
+                0
+            ) / candidates.length;
+
+        return {
+            weapon: candidates[0].weapon,
+            sight: candidates[0].sight,
+            muzzle: candidates[0].muzzle,
+            grip: candidates[0].grip,
+            stance: candidates[0].stance,
+            dpi: candidates[0].dpi,
+            aimSensitivity: candidates[0].aimSensitivity,
+            verticalSensitivity:
+                Number(candidates[0].verticalSensitivity.toFixed(2)),
+            testCount: candidates.length,
+            avgCenterRate: average("centerRate"),
+            avgAverageDistance: average("averageDistance"),
+            avgHorizontalError: average("horizontalError"),
+            avgVerticalError: average("verticalError"),
+            avgOutsideDistance: average("outsideDistance"),
+            avgReturnTime: average("returnTime")
+        };
+    });
+}
+
+function getBestRecoilCandidate(summaries) {
+    if (summaries.length === 0) {
+        return null;
+    }
+
+    const highestCenterRate = Math.max(
+        ...summaries.map(summary => summary.avgCenterRate)
+    );
+
+    const closeCandidates = summaries.filter(
+        summary => highestCenterRate - summary.avgCenterRate <= 5
+    );
+
+    closeCandidates.sort((a, b) =>
+        a.avgAverageDistance - b.avgAverageDistance ||
+        a.avgVerticalError - b.avgVerticalError ||
+        a.avgHorizontalError - b.avgHorizontalError ||
+        a.avgReturnTime - b.avgReturnTime ||
+        a.avgOutsideDistance - b.avgOutsideDistance ||
+        b.avgCenterRate - a.avgCenterRate
+    );
+
+    return closeCandidates[0];
+}
+
+function getRecoilCandidateAimLabel(sight) {
+    const sightData = SIGHTS[sight];
+
+    return sightData.magnified
+        ? `${sightData.name} 감도`
+        : "ADS";
+}
+
+function getCurrentRecoilCandidateCondition() {
+    return {
+        weapon: weaponInput.value,
+        sight: sightInput.value,
+        muzzle: muzzleInput.value,
+        grip: gripInput.value,
+        stance: stanceInput.value,
+        dpi: Number(dpiInput.value)
+    };
+}
+
+function refreshRecoilCandidateView() {
+    renderRecoilCandidates(
+        getCurrentRecoilCandidateCondition()
+    );
+}
+
+function renderRecoilCandidates(currentCandidate) {
+    const summaries =
+        getRecoilCandidateSummaries(currentCandidate);
+    const bestCandidate =
+        getBestRecoilCandidate(summaries);
+
+    bestAimSensitivityLabel.textContent =
+        getRecoilCandidateAimLabel(currentCandidate.sight);
+
+    if (!bestCandidate) {
+        bestAimSensitivity.textContent = "-";
+        bestVerticalSensitivity.textContent = "-";
+        bestRecoilCandidateState.textContent =
+            "현재 조건의 테스트 기록이 없습니다.";
+
+        recoilCandidateList.textContent = "";
+
+        const emptyMessage = document.createElement("p");
+        emptyMessage.className = "recoil_candidate_empty";
+        emptyMessage.textContent =
+            "테스트를 완료하면 감도 조합별 평균 결과가 표시됩니다.";
+        recoilCandidateList.append(emptyMessage);
+
+        return;
+    }
+
+    bestAimSensitivity.textContent =
+        bestCandidate.aimSensitivity;
+    bestVerticalSensitivity.textContent =
+        bestCandidate.verticalSensitivity.toFixed(2);
+    bestRecoilCandidateState.textContent =
+        `평균 중앙 유지율 ${bestCandidate.avgCenterRate.toFixed(1)}%\n` +
+        `평균 중앙 거리 ${bestCandidate.avgAverageDistance.toFixed(1)}px\n` +
+        `평균 수직 오차 ${bestCandidate.avgVerticalError.toFixed(1)}px\n` +
+        `평균 수평 오차 ${bestCandidate.avgHorizontalError.toFixed(1)}px\n` +
+        `${bestCandidate.testCount}회 테스트`;
+
+    recoilCandidateList.textContent = "";
+
+    summaries
+        .sort((a, b) =>
+            a.aimSensitivity - b.aimSensitivity ||
+            a.verticalSensitivity - b.verticalSensitivity
+        )
+        .forEach(summary => {
+            const candidateItem = document.createElement("div");
+            const sensitivityText = document.createElement("strong");
+            const centerRateText = document.createElement("span");
+            const testCountText = document.createElement("small");
+
+            candidateItem.className = "recoil_candidate_item";
+            sensitivityText.textContent =
+                `${summary.aimSensitivity} / ${summary.verticalSensitivity.toFixed(2)}`;
+            centerRateText.textContent =
+                `중앙 유지율 ${summary.avgCenterRate.toFixed(1)}%\n` +
+                `평균 거리 ${summary.avgAverageDistance.toFixed(1)}px\n` +
+                `수직 오차 ${summary.avgVerticalError.toFixed(1)}px\n` +
+                `수평 오차 ${summary.avgHorizontalError.toFixed(1)}px`;
+            testCountText.textContent =
+                `${summary.testCount}회 평균`;
+
+            candidateItem.append(
+                sensitivityText,
+                centerRateText,
+                testCountText
+            );
+            recoilCandidateList.append(candidateItem);
+        });
 }
 
 // 추천 출력
