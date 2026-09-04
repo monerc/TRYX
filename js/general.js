@@ -36,6 +36,21 @@ const TARGET_HOLD_TIME = 1000;
 const GENERAL_SETTINGS_STORAGE_KEY = "tryxGeneralSettings";
 const GENERAL_HISTORY_STORAGE_KEY = "tryxGeneralTestHistory";
 const GENERAL_MAX_HISTORY_COUNT = 5;
+const MIN_RECOMMENDATION_TRIALS = 10;
+
+// First flick detection thresholds (tune after browser play testing)
+const FLICK_NOISE_DISTANCE = 0.5;
+const FLICK_START_MIN_SAMPLES = 3;
+const FLICK_START_MIN_DISTANCE = 4;
+const FLICK_START_MIN_SPEED = 0.08;
+const FLICK_START_MAX_GAP = 45;
+const FLICK_START_WINDOW = 120;
+const FLICK_LOW_SPEED_THRESHOLD = 0.05;
+const FLICK_LOW_SPEED_DURATION = 45;
+const FLICK_END_INACTIVITY = 100;
+const CORRECTION_BURST_INACTIVITY = 120;
+const OFF_AXIS_RADIUS_MULTIPLIER = 1.5;
+const SLOW_FLICK_DURATION = 700;
 
 document.documentElement.style.setProperty(
     "--target-hold-time",
@@ -198,6 +213,7 @@ async function cancelTestSession(message) {
         timerAnimation = null;
     }
 
+    clearCurrentTrialTimers();
     currentTest = 0;
     currentTrial = null;
     testResults = [];
@@ -354,16 +370,38 @@ function startTrial() {
         maxProgress: 0,
         overshoot: 0,
         undershoot: 0,
-        lastMoveTime: null,
-        hasStartedMoving: false,
         correctionCount: 0,
-        lastDirection: 0,
-        lastCorrectionTime: 0,
-        firstCorrection: false,
-        firstPattern: null,
         hasMissed: false,
-        minDistanceBeforeCorrection: targetDistance,
-        firstApproachDistance: null
+        flickState: "WAITING",
+        flickStartTime: null,
+        flickEndTime: null,
+        flickStartX: null,
+        flickStartY: null,
+        flickEndX: null,
+        flickEndY: null,
+        firstFlickEndDistance: null,
+        firstFlickProgress: null,
+        firstFlickCrossError: null,
+        firstFlickPattern: null,
+        offAxis: false,
+        flickCandidateStartTime: null,
+        flickCandidateStartX: null,
+        flickCandidateStartY: null,
+        flickCandidateSamples: 0,
+        flickCandidateDistance: 0,
+        lastSampleTime: null,
+        lastMeaningfulMoveTime: null,
+        lastActiveSampleTime: null,
+        lastActiveX: null,
+        lastActiveY: null,
+        rawPeakSpeed: 0,
+        lowSpeedSince: null,
+        flickEndTimer: null,
+        correctionBurstActive: false,
+        correctionBurstTimer: null,
+        flickEndFallback: false,
+        slowTrial: false,
+        invalidPace: false
     };
 
     trialStartTime =
@@ -400,6 +438,9 @@ document.addEventListener(
         const moveX = rawMoveX * sensitivityMultiplier;
         const moveY = rawMoveY * sensitivityMultiplier;
 
+        const previousX = crosshairX;
+        const previousY = crosshairY;
+
         crosshairX += moveX;
         crosshairY += moveY;
 
@@ -419,10 +460,17 @@ document.addEventListener(
 
         updateCrosshair();
 
-        analyzeMouseMovement(
-            moveX,
-            moveY
-        );
+        analyzeMouseMovement({
+            rawMoveX,
+            rawMoveY,
+            scaledMoveX: crosshairX - previousX,
+            scaledMoveY: crosshairY - previousY,
+            time: performance.now(),
+            x: crosshairX,
+            y: crosshairY,
+            previousX,
+            previousY
+        });
     }
 );
 
@@ -445,126 +493,213 @@ document.addEventListener("mouseup", event => {
     }
 });
 
-// 마우스 움직임 분석
-function analyzeMouseMovement(moveX, moveY) {
+// 첫 플릭 및 후속 보정 움직임 분석
+function analyzeMouseMovement(sample) {
     if (!currentTrial) {
         return;
     }
 
-    const distanceToTarget = Math.hypot(
-        crosshairX - targetX,
-        crosshairY - targetY
+    if (isHoldingTarget && currentTrial.flickState !== "ACTIVE") {
+        return;
+    }
+
+    const rawMovementDistance = Math.hypot(
+        sample.rawMoveX,
+        sample.rawMoveY
     );
+    const previousSampleTime = currentTrial.lastSampleTime;
+    const deltaTime = previousSampleTime === null
+        ? 0
+        : Math.max(1, sample.time - previousSampleTime);
+    const rawSpeed = deltaTime > 0
+        ? rawMovementDistance / deltaTime
+        : 0;
+    currentTrial.lastSampleTime = sample.time;
 
-    if (!currentTrial.firstCorrection) {
-        currentTrial.minDistanceBeforeCorrection = Math.min(
-            currentTrial.minDistanceBeforeCorrection,
-            distanceToTarget
+    if (currentTrial.flickState === "WAITING") {
+        updateFlickStartCandidate(sample, rawMovementDistance, rawSpeed);
+        return;
+    }
+
+    if (currentTrial.flickState === "ACTIVE") {
+        currentTrial.lastActiveSampleTime = sample.time;
+        currentTrial.lastActiveX = sample.x;
+        currentTrial.lastActiveY = sample.y;
+        currentTrial.rawPeakSpeed = Math.max(
+            currentTrial.rawPeakSpeed,
+            rawSpeed
         );
-    }
 
-    const movementProjection = moveX * currentTrial.unitX + moveY * currentTrial.unitY;
-    
-    const now = performance.now();
-    const targetRadius = target.offsetWidth / 2;
-    const targetNearEdge = currentTrial.targetDistance - targetRadius;
-    const patternThreshold = targetRadius * 0.5;
-    const minimumProgress = currentTrial.targetDistance * 0.15;
-    const previousMaxProgress = currentTrial.maxProgress;
-    const progress = getTargetProgress();
-    currentTrial.maxProgress = Math.max(
-        currentTrial.maxProgress,
-        progress
-    );
-
-    // 1. 이동 중 멈췄다가 다시 움직인 경우
-    if (
-        currentTrial.hasStartedMoving &&
-        currentTrial.lastMoveTime !== null
-    ) {
-        const pauseTime = now - currentTrial.lastMoveTime;
-
-        if (
-            pauseTime >= 120 &&
-            Math.abs(movementProjection) > 1.2 &&
-            previousMaxProgress >= minimumProgress &&
-            previousMaxProgress < targetNearEdge &&
-            now - currentTrial.lastCorrectionTime >= 100
-        ) {
-            currentTrial.correctionCount++;
-            currentTrial.lastCorrectionTime = now;
-            const underAmount = targetNearEdge - previousMaxProgress;
-            currentTrial.undershoot = Math.max(
-                currentTrial.undershoot, underAmount
-            );
-            if (currentTrial.firstPattern === null && underAmount >= patternThreshold) {
-                currentTrial.firstPattern = "UNDER";
+        if (rawSpeed <= FLICK_LOW_SPEED_THRESHOLD) {
+            if (currentTrial.lowSpeedSince === null) {
+                currentTrial.lowSpeedSince = sample.time;
             }
-            if (!currentTrial.firstCorrection) {
-                currentTrial.firstCorrection = true;
-                currentTrial.firstApproachDistance = distanceToTarget;
-            }
+        } else {
+            currentTrial.lowSpeedSince = null;
         }
+
+        scheduleFlickEnd(sample);
+        return;
     }
 
-    if (Math.abs(movementProjection) > 1.2) {
-        currentTrial.hasStartedMoving = true;
-        currentTrial.lastMoveTime = now;
-    }
-
-    // 2. 진행 방향 판정
-    let direction = 0;
-
-    if (movementProjection > 1.2) {
-        direction = 1;
-    }
-    if (movementProjection < -1.2) {
-        direction = -1;
-    }
-
-    // 3. 실제 방향 전환
-    if (direction !== 0 &&
-        currentTrial.lastDirection !== 0 && 
-        direction !== currentTrial.lastDirection &&
-        currentTrial.maxProgress >= minimumProgress &&
-        now - currentTrial.lastCorrectionTime >= 100
-    ) {
-        currentTrial.correctionCount++;
-        currentTrial.lastCorrectionTime = now;
-        if (!currentTrial.firstCorrection) {
-            currentTrial.firstCorrection = true;
-            currentTrial.firstApproachDistance = distanceToTarget;
-            if (progress < targetNearEdge) {
-                const underAmount = targetNearEdge - progress;
-                currentTrial.undershoot = Math.max(
-                    currentTrial.undershoot, underAmount
-                );
-                if (currentTrial.firstPattern === null && underAmount >= patternThreshold) {
-                    currentTrial.firstPattern = "UNDER";
-                }
-            }
-        }
-        
-    }
-
-    if (direction !== 0) {
-        currentTrial.lastDirection = direction;
-    }
-
-    // 4. 오버슈트
-    const targetFarEdge = currentTrial.targetDistance + targetRadius;
-    if (progress > targetFarEdge) {
-        const overshoot = progress - targetFarEdge;
-        currentTrial.overshoot = Math.max(
-            currentTrial.overshoot, overshoot
-        );
-        if (currentTrial.firstPattern === null && overshoot >= patternThreshold) {
-            currentTrial.firstPattern = "OVER";
-        }
+    if (rawMovementDistance >= FLICK_NOISE_DISTANCE) {
+        trackCorrectionBurst();
     }
 }
 
-// 목표 방향 진행 거리
+function resetFlickStartCandidate(sample) {
+    currentTrial.flickCandidateStartTime = sample.time;
+    currentTrial.flickCandidateStartX = sample.previousX;
+    currentTrial.flickCandidateStartY = sample.previousY;
+    currentTrial.flickCandidateSamples = 0;
+    currentTrial.flickCandidateDistance = 0;
+}
+
+function updateFlickStartCandidate(sample, rawMovementDistance, rawSpeed) {
+    if (rawMovementDistance < FLICK_NOISE_DISTANCE) {
+        return;
+    }
+
+    const candidateExpired =
+        currentTrial.flickCandidateStartTime !== null &&
+        (sample.time - currentTrial.flickCandidateStartTime > FLICK_START_WINDOW ||
+            (currentTrial.lastMeaningfulMoveTime !== null &&
+                sample.time - currentTrial.lastMeaningfulMoveTime > FLICK_START_MAX_GAP));
+
+    if (currentTrial.flickCandidateStartTime === null || candidateExpired) {
+        resetFlickStartCandidate(sample);
+    }
+
+    currentTrial.flickCandidateSamples++;
+    currentTrial.flickCandidateDistance += rawMovementDistance;
+    currentTrial.lastMeaningfulMoveTime = sample.time;
+
+    const elapsed = Math.max(1, sample.time - currentTrial.flickCandidateStartTime);
+    const averageSpeed = currentTrial.flickCandidateDistance / elapsed;
+
+    if (
+        currentTrial.flickCandidateSamples >= FLICK_START_MIN_SAMPLES &&
+        currentTrial.flickCandidateDistance >= FLICK_START_MIN_DISTANCE &&
+        Math.max(rawSpeed, averageSpeed) >= FLICK_START_MIN_SPEED
+    ) {
+        currentTrial.flickState = "ACTIVE";
+        currentTrial.flickStartTime = currentTrial.flickCandidateStartTime;
+        currentTrial.flickStartX = currentTrial.flickCandidateStartX;
+        currentTrial.flickStartY = currentTrial.flickCandidateStartY;
+        currentTrial.lastActiveSampleTime = sample.time;
+        currentTrial.lastActiveX = sample.x;
+        currentTrial.lastActiveY = sample.y;
+        currentTrial.rawPeakSpeed = Math.max(rawSpeed, averageSpeed);
+        scheduleFlickEnd(sample);
+    }
+}
+
+function scheduleFlickEnd(sample) {
+    if (currentTrial.flickEndTimer) {
+        clearTimeout(currentTrial.flickEndTimer);
+    }
+
+    const lowSpeedDuration = currentTrial.lowSpeedSince === null
+        ? 0
+        : sample.time - currentTrial.lowSpeedSince;
+    const delay = currentTrial.lowSpeedSince === null
+        ? FLICK_END_INACTIVITY
+        : Math.max(0, FLICK_LOW_SPEED_DURATION - lowSpeedDuration);
+    const trial = currentTrial;
+
+    trial.flickEndTimer = setTimeout(() => {
+        if (currentTrial !== trial || trial.flickState !== "ACTIVE") {
+            return;
+        }
+        finalizeFirstFlick(sample.time, sample.x, sample.y);
+    }, delay);
+}
+
+function finalizeFirstFlick(endTime, endX, endY) {
+    if (!currentTrial || currentTrial.flickState === "ENDED") {
+        return;
+    }
+
+    if (currentTrial.flickEndTimer) {
+        clearTimeout(currentTrial.flickEndTimer);
+        currentTrial.flickEndTimer = null;
+    }
+
+    currentTrial.flickState = "ENDED";
+    currentTrial.flickEndTime = endTime;
+    currentTrial.flickEndX = endX;
+    currentTrial.flickEndY = endY;
+    currentTrial.firstFlickEndDistance = Math.hypot(
+        endX - targetX,
+        endY - targetY
+    );
+
+    const movedX = endX - currentTrial.startX;
+    const movedY = endY - currentTrial.startY;
+    currentTrial.firstFlickProgress =
+        movedX * currentTrial.unitX + movedY * currentTrial.unitY;
+    currentTrial.firstFlickCrossError =
+        movedX * -currentTrial.unitY + movedY * currentTrial.unitX;
+    currentTrial.slowTrial =
+        currentTrial.flickStartTime !== null &&
+        endTime - currentTrial.flickStartTime > SLOW_FLICK_DURATION;
+    currentTrial.invalidPace = currentTrial.slowTrial;
+
+    classifyFirstFlick();
+}
+
+function classifyFirstFlick() {
+    const targetRadius = target.offsetWidth / 2;
+    const distance = currentTrial.firstFlickEndDistance;
+    const progress = currentTrial.firstFlickProgress;
+    const crossError = Math.abs(currentTrial.firstFlickCrossError);
+
+    if (distance <= targetRadius) {
+        currentTrial.firstFlickPattern = "CLEAN";
+        return;
+    }
+
+    if (crossError > targetRadius * OFF_AXIS_RADIUS_MULTIPLIER) {
+        currentTrial.offAxis = true;
+        currentTrial.firstFlickPattern = "OFF_AXIS";
+        return;
+    }
+
+    if (progress < currentTrial.targetDistance) {
+        currentTrial.firstFlickPattern = "UNDER";
+        currentTrial.undershoot = Math.max(
+            0,
+            currentTrial.targetDistance - targetRadius - progress
+        );
+        return;
+    }
+
+    currentTrial.firstFlickPattern = "OVER";
+    currentTrial.overshoot = Math.max(
+        0,
+        progress - (currentTrial.targetDistance + targetRadius)
+    );
+}
+
+function trackCorrectionBurst() {
+    if (!currentTrial.correctionBurstActive) {
+        currentTrial.correctionBurstActive = true;
+        currentTrial.correctionCount++;
+    }
+
+    if (currentTrial.correctionBurstTimer) {
+        clearTimeout(currentTrial.correctionBurstTimer);
+    }
+
+    const trial = currentTrial;
+    trial.correctionBurstTimer = setTimeout(() => {
+        if (currentTrial === trial) {
+            trial.correctionBurstActive = false;
+            trial.correctionBurstTimer = null;
+        }
+    }, CORRECTION_BURST_INACTIVITY);
+}
+
 function getTargetProgress() {
     const movedX =
         crosshairX -
@@ -625,10 +760,6 @@ document.addEventListener(
             return;
         }
 
-        if (currentTrial.firstApproachDistance === null) {
-            currentTrial.firstApproachDistance = distance;
-        }
-
         if (isHoldingTarget) {
             return;
         }
@@ -658,27 +789,55 @@ function completeTrial(endTime = performance.now()) {
         target.offsetWidth / 2;
 
 
-    if (currentTrial.firstApproachDistance === null) {
-        currentTrial.firstApproachDistance = Math.hypot(
+    if (currentTrial.flickState === "WAITING") {
+        currentTrial.flickState = "ENDED";
+        currentTrial.flickEndTime = endTime;
+        currentTrial.flickEndX = crosshairX;
+        currentTrial.flickEndY = crosshairY;
+        currentTrial.firstFlickEndDistance = Math.hypot(
             crosshairX - targetX,
             crosshairY - targetY
         );
+        currentTrial.firstFlickProgress = null;
+        currentTrial.firstFlickCrossError = null;
+        currentTrial.firstFlickPattern = "INVALID";
+        currentTrial.invalidPace = true;
+    } else if (currentTrial.flickState === "ACTIVE") {
+        currentTrial.flickEndFallback = true;
+        finalizeFirstFlick(
+            currentTrial.lastActiveSampleTime ?? endTime,
+            currentTrial.lastActiveX ?? crosshairX,
+            currentTrial.lastActiveY ?? crosshairY
+        );
+        currentTrial.invalidPace = true;
     }
 
 
     const firstAccuracyValue = calculateFirstAccuracy(
-        currentTrial.firstApproachDistance, targetRadius
+        currentTrial.firstFlickEndDistance, targetRadius
     );
 
-    const pattern = currentTrial.firstPattern === null
-        ? "CLEAN"
-        : currentTrial.firstPattern;
+    const pattern = currentTrial.firstFlickPattern;
+    const firstFlickDetected = currentTrial.flickStartTime !== null;
     const oneFlickSuccess =
+        firstFlickDetected &&
+        currentTrial.flickEndFallback === false &&
+        currentTrial.invalidPace === false &&
         pattern === "CLEAN" &&
         currentTrial.correctionCount === 0 &&
-        currentTrial.hasMissed === false;
+        currentTrial.hasMissed === false &&
+        currentTrial.offAxis === false;
 
-    testResults.push({
+    const firstFlickDuration = currentTrial.flickStartTime === null
+        ? 0
+        : currentTrial.flickEndTime - currentTrial.flickStartTime;
+    const validTrial =
+        firstFlickDetected &&
+        currentTrial.invalidPace === false &&
+        pattern !== "INVALID";
+    const recommendationEligible =
+        validTrial && currentTrial.offAxis === false;
+    const trialResult = {
         time: elapsedTime,
         overshoot: currentTrial.overshoot,
         undershoot: currentTrial.undershoot,
@@ -686,9 +845,39 @@ function completeTrial(endTime = performance.now()) {
         firstAccuracy: firstAccuracyValue,
         pattern: pattern,
         hasMissed: currentTrial.hasMissed,
-        oneFlickSuccess: oneFlickSuccess
-    });
+        oneFlickSuccess: oneFlickSuccess,
+        firstFlickDetected,
+        flickEndFallback: currentTrial.flickEndFallback,
+        offAxis: currentTrial.offAxis,
+        firstFlickEndDistance: currentTrial.firstFlickEndDistance,
+        firstFlickProgress: currentTrial.firstFlickProgress,
+        firstFlickCrossError: currentTrial.firstFlickCrossError,
+        firstFlickDuration,
+        slowTrial: currentTrial.slowTrial,
+        invalidPace: currentTrial.invalidPace,
+        validTrial,
+        recommendationEligible,
+        rawPeakSpeed: currentTrial.rawPeakSpeed
+    };
 
+    testResults.push(trialResult);
+    console.table([{
+        trial: currentTest + 1,
+        firstFlickPattern: pattern,
+        firstFlickDuration,
+        firstFlickEndDistance: currentTrial.firstFlickEndDistance,
+        firstFlickProgress: currentTrial.firstFlickProgress,
+        firstFlickCrossError: currentTrial.firstFlickCrossError,
+        firstAccuracy: firstAccuracyValue,
+        correctionCount: currentTrial.correctionCount,
+        offAxis: currentTrial.offAxis,
+        slowTrial: currentTrial.slowTrial,
+        invalidPace: currentTrial.invalidPace,
+        oneFlickSuccess,
+        rawPeakSpeed: currentTrial.rawPeakSpeed
+    }]);
+
+    clearCurrentTrialTimers();
     currentTrial = null;
     target.classList.remove("show");
     currentTest++;
@@ -717,12 +906,9 @@ function completeTrial(endTime = performance.now()) {
 
 // 첫 접근 정확도
 function calculateFirstAccuracy(distance, targetRadius) {
-    const errorDistance = Math.max(
-        0, distance - targetRadius
-    );
     const toleranceDistance = targetRadius * 4;
     const accuracy = (
-        1 - errorDistance / toleranceDistance
+        1 - distance / toleranceDistance
     ) * 100;
     return clamp(
         accuracy, 0, 100
@@ -811,31 +997,49 @@ function analyzeResult() {
     }
 
 
-    const count = testResults.length;
-    const underCount = testResults.filter(
+    const totalTrialCount = testResults.length;
+    const eligibleResults = testResults.filter(
+        result => result.recommendationEligible === true
+    );
+    const recommendationEligibleTrialCount = eligibleResults.length;
+    const underCount = eligibleResults.filter(
         result => result.pattern === "UNDER"
     ).length;
-    const overCount = testResults.filter(
+    const overCount = eligibleResults.filter(
         result => result.pattern === "OVER"
     ).length;
-    const cleanCount = testResults.filter(
+    const cleanCount = eligibleResults.filter(
         result => result.pattern === "CLEAN"
     ).length;
-    const oneFlickSuccessCount = testResults.filter(
+    const offAxisCount = testResults.filter(
+        result => result.pattern === "OFF_AXIS"
+    ).length;
+    const slowTrialCount = testResults.filter(
+        result => result.slowTrial === true
+    ).length;
+    const invalidPaceCount = testResults.filter(
+        result => result.invalidPace === true
+    ).length;
+    const validTrialCount = testResults.filter(
+        result => result.validTrial === true
+    ).length;
+    const oneFlickSuccessCount = eligibleResults.filter(
         result => result.oneFlickSuccess
     ).length;
     const oneFlickSuccessRate =
-        oneFlickSuccessCount / count * 100;
-    const correctionOccurredCount = testResults.filter(
+        recommendationEligibleTrialCount > 0
+            ? oneFlickSuccessCount / recommendationEligibleTrialCount * 100
+            : 0;
+    const correctionOccurredCount = eligibleResults.filter(
         result => result.correctionCount >= 1
     ).length;
     const missedTrialCount = testResults.filter(
         result => result.hasMissed
     ).length;
-    const underResults = testResults.filter(
+    const underResults = eligibleResults.filter(
         result => result.pattern === "UNDER"
     );
-    const overResults = testResults.filter(
+    const overResults = eligibleResults.filter(
         result => result.pattern === "OVER"
     );
     const avgUnderPattern = 
@@ -850,9 +1054,15 @@ function analyzeResult() {
             ) / overCount : 0;
     console.log (
         "GENERAL PATTERN COUNT ===>", {
+            totalTrialCount,
             underCount,
             overCount,
             cleanCount,
+            offAxisCount,
+            slowTrialCount,
+            invalidPaceCount,
+            validTrialCount,
+            recommendationEligibleTrialCount,
             oneFlickSuccessCount,
             oneFlickSuccessRate,
             correctionOccurredCount,
@@ -867,46 +1077,34 @@ function analyzeResult() {
                 sum + result.time,
             0
         ) /
-        count /
+        totalTrialCount /
         1000;
 
 
-    const avgOvershoot =
-        testResults.reduce(
-            (sum, result) =>
-                sum + result.overshoot,
-            0
-        ) /
-        count;
+    const avgOvershoot = avgOverPattern;
 
 
-    const avgUndershoot =
-        testResults.reduce(
-            (sum, result) =>
-                sum + result.undershoot,
-            0
-        ) /
-        count;
+    const avgUndershoot = avgUnderPattern;
 
 
     const avgCorrection =
-        testResults.reduce(
+        eligibleResults.reduce(
             (sum, result) =>
                 sum +
                 result.correctionCount,
             0
         ) /
-        count;
+        Math.max(1, recommendationEligibleTrialCount);
 
 
     const avgFirstAccuracy =
-        testResults.reduce(
+        eligibleResults.reduce(
             (sum, result) =>
                 sum +
                 result.firstAccuracy,
             0
         ) /
-        count;
+        Math.max(1, recommendationEligibleTrialCount);
 
 
     averageTime.textContent =
@@ -929,14 +1127,20 @@ function analyzeResult() {
         `${avgFirstAccuracy.toFixed(1)}%`;
 
     oneFlickSuccessCountText.textContent =
-        `${oneFlickSuccessCount} / ${count}`;
+        `${oneFlickSuccessCount} / ${recommendationEligibleTrialCount}`;
 
     recordSensitivitySession({
         generalSensitivity: currentGeneralSensitivity,
+        totalTrialCount,
         oneFlickSuccessCount,
         oneFlickSuccessRate,
         underCount,
         overCount,
+        offAxisCount,
+        slowTrialCount,
+        invalidPaceCount,
+        validTrialCount,
+        recommendationEligibleTrialCount,
         correctionOccurredCount,
         missedTrialCount,
         avgFirstAccuracy,
@@ -956,7 +1160,10 @@ function analyzeResult() {
         oneFlickSuccessCount,
         oneFlickSuccessRate,
         avgUnderPattern,
-        avgOverPattern
+        avgOverPattern,
+        recommendationEligibleTrialCount,
+        invalidPaceCount,
+        offAxisCount
     );
 
     const previousRecord = getGeneralTestHistory()[0] || null;
@@ -965,11 +1172,17 @@ function analyzeResult() {
         dpi: Number(dpiInput.value),
         generalSensitivity: currentGeneralSensitivity,
         recommendedGeneral: latestRecommendGeneral,
+        totalTrialCount,
         oneFlickSuccessCount,
         oneFlickSuccessRate,
         underCount,
         overCount,
         cleanCount,
+        offAxisCount,
+        slowTrialCount,
+        invalidPaceCount,
+        validTrialCount,
+        recommendationEligibleTrialCount,
         correctionOccurredCount,
         missedTrialCount,
         avgFirstAccuracy,
@@ -998,6 +1211,22 @@ function analyzeResult() {
     }
 }
 
+function clearCurrentTrialTimers() {
+    if (!currentTrial) {
+        return;
+    }
+
+    if (currentTrial.flickEndTimer) {
+        clearTimeout(currentTrial.flickEndTimer);
+        currentTrial.flickEndTimer = null;
+    }
+
+    if (currentTrial.correctionBurstTimer) {
+        clearTimeout(currentTrial.correctionBurstTimer);
+        currentTrial.correctionBurstTimer = null;
+    }
+}
+
 // 감도별 테스트 기록
 function recordSensitivitySession(sessionResult) {
     sensitivityHistory.push(sessionResult);
@@ -1006,8 +1235,13 @@ function recordSensitivitySession(sessionResult) {
 
 function getSensitivitySummaries() {
     const groupedHistory = new Map();
+    const qualifiedHistory = sensitivityHistory.filter(
+        result =>
+            Number.isFinite(result.recommendationEligibleTrialCount) &&
+            result.recommendationEligibleTrialCount >= MIN_RECOMMENDATION_TRIALS
+    );
 
-    sensitivityHistory.forEach(result => {
+    qualifiedHistory.forEach(result => {
         if (!groupedHistory.has(result.generalSensitivity)) {
             groupedHistory.set(result.generalSensitivity, []);
         }
@@ -1030,6 +1264,12 @@ function getSensitivitySummaries() {
                 avgOneFlickSuccessRate: average("oneFlickSuccessRate"),
                 avgUnderCount: average("underCount"),
                 avgOverCount: average("overCount"),
+                avgOffAxisCount: average("offAxisCount"),
+                avgSlowTrialCount: average("slowTrialCount"),
+                avgInvalidPaceCount: average("invalidPaceCount"),
+                avgValidTrialCount: average("validTrialCount"),
+                avgRecommendationEligibleTrialCount:
+                    average("recommendationEligibleTrialCount"),
                 avgCorrectionOccurredCount: average("correctionOccurredCount"),
                 avgMissedTrialCount: average("missedTrialCount"),
                 avgFirstAccuracy: average("avgFirstAccuracy"),
@@ -1040,15 +1280,21 @@ function getSensitivitySummaries() {
 }
 
 function getBestSensitivityCandidate(summaries) {
-    if (summaries.length === 0) {
+    const eligibleSummaries = summaries.filter(
+        summary =>
+            Number.isFinite(summary.avgRecommendationEligibleTrialCount) &&
+            summary.avgRecommendationEligibleTrialCount >= MIN_RECOMMENDATION_TRIALS
+    );
+
+    if (eligibleSummaries.length === 0) {
         return null;
     }
 
     const highestSuccessRate = Math.max(
-        ...summaries.map(summary => summary.avgOneFlickSuccessRate)
+        ...eligibleSummaries.map(summary => summary.avgOneFlickSuccessRate)
     );
 
-    const closeCandidates = summaries.filter(
+    const closeCandidates = eligibleSummaries.filter(
         summary =>
             highestSuccessRate - summary.avgOneFlickSuccessRate <= 5
     );
@@ -1074,6 +1320,10 @@ function renderSensitivityHistory() {
     const bestCandidate = getBestSensitivityCandidate(summaries);
 
     if (!bestCandidate) {
+        bestSensitivity.textContent = "-";
+        bestSensitivityState.textContent =
+            "유효한 테스트 데이터가 부족합니다.";
+        sensitivityHistoryList.textContent = "";
         return;
     }
 
@@ -1424,7 +1674,10 @@ function createRecommendation(
     oneFlickSuccessCount,
     oneFlickSuccessRate,
     avgUnderPattern,
-    avgOverPattern
+    avgOverPattern,
+    recommendationEligibleTrialCount,
+    invalidPaceCount,
+    offAxisCount
 ) {
     const currentGeneral =
         Number(generalInput.value);
@@ -1440,8 +1693,14 @@ function createRecommendation(
     let state = "현재 감도 적정";
     let feedbackMessage = "";
 
+    if (recommendationEligibleTrialCount < MIN_RECOMMENDATION_TRIALS) {
+        change = 0;
+        state = "테스트 품질 부족";
+        feedbackMessage =
+            `추천 가능한 Trial이 ${recommendationEligibleTrialCount}회로 최소 기준 ${MIN_RECOMMENDATION_TRIALS}회보다 적습니다. ` +
+            `OFF_AXIS ${offAxisCount}회, invalidPace ${invalidPaceCount}회가 발생해 정확한 감도 추천이 어려우므로 현재 감도 ${currentGeneral}을 유지하고 재테스트해 주세요.`;
     // UNDER / OVER 방향 표본이 부족한 경우
-    if (directionalCount < 5) {
+    } else if (directionalCount < 5) {
         change = 0;
         if (!stableControl) {
             state = "추가 테스트 필요";
@@ -1545,7 +1804,7 @@ function createRecommendation(
             `현재보다 ${change} 추천`;
     } else {
         recommendState.textContent =
-            state === "추가 테스트 필요"
+            state === "추가 테스트 필요" || state === "테스트 품질 부족"
                 ? "현재값 유지 후 재테스트"
                 : "현재 감도 유지 추천";
     }
@@ -1560,6 +1819,9 @@ function createRecommendation(
             cleanCount,
             oneFlickSuccessCount,
             oneFlickSuccessRate,
+            recommendationEligibleTrialCount,
+            invalidPaceCount,
+            offAxisCount,
             avgUnderPattern,
             avgOverPattern,
             avgOvershoot,
